@@ -359,6 +359,7 @@ async fn handle_message(bot: Bot, msg: Message, db: Storage, states: StateStorag
                 bot.send_message(msg.chat.id, "Мем обновлён!")
                     .reply_markup(KeyboardRemove::new())
                     .await?;
+                states.lock().unwrap().remove(&user);
             }
         }
     }
