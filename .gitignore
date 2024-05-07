@@ -1,0 +1,6 @@
+.devenv
+.direnv
+/target
+node_modules
+.env
+result

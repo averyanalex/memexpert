@@ -1,0 +1,119 @@
+{% extends "base.html" %} {% block title %}{{ title }}{% endblock %} {% block
+head %}
+<meta name="description" content="{{ caption }}" />
+<meta property="og:title" content="{{ title }}" />
+<meta property="og:description" content="{{ caption }}" />
+<meta property="og:site_name" content="MemeXpert" />
+<meta property="og:url" content="https://memexpert.xyz/{{ language }}/{{ slug }}" />
+<meta property="og:locale" content="{{ locale }}" />
+{% if is_mime_video %}
+<meta property="og:type" content="video.other" />
+<meta property="og:video" content="https://memexpert.xyz/static/{{ filename }}" />
+<meta property="og:video:secure_url" content="https://memexpert.xyz/static/{{ filename }}" />
+<meta property="ya:ovs:content_url" content="https://memexpert.xyz/static/{{ filename }}" />
+<meta property="ya:ovs:content_url:public" content="true" />
+<meta property="ya:ovs:content_id" content="{{ id }}" />
+<meta property="ya:ovs:status" content="published" />
+<meta property="og:video:type" content="{{ mime_type }}" />
+<meta property="og:video:width" content="{{ width }}" />
+<meta property="og:video:height" content="{{ height }}" />
+<meta property="video:duration" content="{{ duration_secs }}" />
+<meta property="og:image" content="https://memexpert.xyz/static/{{ thumb_filename }}" />
+<meta property="og:image:secure_url" content="https://memexpert.xyz/static/{{ thumb_filename }}" />
+<meta property="og:image:type" content="{{ thumb_mime_type }}" />
+<meta property="og:image:width" content="{{ thumb_width }}" />
+<meta property="og:image:height" content="{{ thumb_height }}" />
+<meta property="ya:ovs:allow_embed" content="true" />
+<meta property="ya:ovs:adult" content="false" />
+<meta property="ya:ovs:upload_date" content="{{ created_date }}" />
+{% else %}
+<meta property="og:type" content="article" />
+<meta property="og:image" content="https://memexpert.xyz/static/{{ filename }}" />
+<meta property="og:image:secure_url" content="https://memexpert.xyz/static/{{ filename }}" />
+<meta property="og:image:type" content="{{ mime_type }}" />
+<meta property="og:image:width" content="{{ width }}" />
+<meta property="og:image:height" content="{{ height }}" />
+{% endif %}
+<meta property="og:image:alt" content="{{ description }}" />
+{% endblock %} {% block content %}
+<div itemscope itemtype="https://schema.org/{% if is_mime_video %}VideoObject{% else %}ImageObject{% endif %}"
+    class="max-w-7xl flex flex-col gap-2 items-center">
+    <h1 itemprop="name"
+        class="my-3 font-extrabold leading-none tracking-tight text-gray-900 dark:text-gray-100 text-2xl md:text-3xl lg:text-4xl">
+        {{ title }}
+    </h1>
+    <div class="w-full flex flex-col lg:flex-row gap-6">
+        <figure class="w-full">
+            <div class="flex justify-center items-center">
+                {% if is_mime_video %}
+                <video itemprop="contentUrl" src="/static/{{ filename }}" poster="/static/{{ thumb_filename }}"
+                    class="h-auto w-full max-w-full rounded-md shadow-lg shadow-gray-200 dark:shadow-gray-800"
+                    width="{{ width }}" height="{{ height }}" {% if is_animation %}loop muted autoplay{% else
+                    %}controls{% endif %}>
+                    Your browser doesn't support HTML5 video tag.
+                </video>
+                <meta itemprop="duration" content="{{ duration }}" />
+                <link itemprop="thumbnailUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
+                <meta itemprop="allowEmbed" content="true" />
+                <meta itemprop="content_id" content="{{ id }}" />
+                <span itemprop="thumbnail" itemscope itemtype="https://schema.org/ImageObject">
+                    <link itemprop="contentUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
+                    <meta itemprop="width" content="{{ thumb_width }}" />
+                    <meta itemprop="height" content="{{ thumb_height }}" />
+                    <meta itemprop="encodingFormat" content="{{ thumb_mime_type }}" />
+                </span>
+                {% else %}
+                <img itemprop="contentUrl" src="/static/{{ filename }}" alt="{{ caption }}"
+                    class="h-auto w-full max-w-full rounded-md shadow-lg shadow-gray-200 dark:shadow-gray-800"
+                    width="{{ width }}" height="{{ height }}" />
+                <meta itemprop="representativeOfPage" content="true" />
+                {% endif %}
+            </div>
+            <figcaption itemprop="caption" class="mt-2 text-xl text-center text-gray-800 dark:text-gray-200">
+                {{ caption }}
+            </figcaption>
+        </figure>
+        <div class="flex flex-col gap-4">
+            {% if let Some(text) = text %}
+            <div>
+                <h2 class="font-bold text-gray-900 dark:text-gray-100">
+                    Текст на меме
+                </h2>
+                <p itemprop="embeddedTextCaption" class="text-gray-900 dark:text-gray-100">
+                    {{ text }}
+                </p>
+            </div>
+            {% endif %}
+            <div>
+                <h2 class="font-bold text-gray-900 dark:text-gray-100">
+                    Описание содержимого мема
+                </h2>
+                <p itemprop="description" class="text-gray-900 dark:text-gray-100">
+                    {{ description }}
+                </p>
+            </div>
+            {% if let Some(source) = source %}
+            <h3 itemprop="creditText" class="font-semibold text-gray-800 dark:text-gray-200">Источник мема: <a
+                    class="underline" target="_blank" href="{{ source }}">{{ source }}</a>.</h3>
+            {% else %}
+            <meta itemprop="creditText" content="Источник мема неизвестен." />
+            {% endif %}
+            <div class="flex flex-col items-center mb-3">
+                <a download href="/static/{{ filename }}"
+                    class="max-w-48 inline-flex items-center justify-center px-5 py-3 text-base font-medium text-center text-white bg-blue-700 rounded-md shadow-md hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 dark:focus:ring-blue-900">
+                    <svg class="fill-current w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M13 8V2H7v6H2l8 8 8-8h-5zM0 18h20v2H0v-2z" />
+                    </svg>
+                    Скачать мем
+                </a>
+            </div>
+        </div>
+    </div>
+    <meta itemprop="width" content="{{ width }}" />
+    <meta itemprop="height" content="{{ height }}" />
+    <link itemprop="url" href="https://memexpert.xyz/{{ language }}/{{ slug }}" />
+    <meta itemprop="encodingFormat" content="{{ mime_type }}" />
+    <meta itemprop="isFamilyFriendly" content="true" />
+    <meta itemprop="uploadDate" content="{{ created_date }}" />
+</div>
+{% endblock %}

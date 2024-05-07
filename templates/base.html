@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="{{ language }}" prefix="og: http://ogp.me/ns# video: http://ogp.me/ns/video#">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="/main.css" rel="stylesheet" />
+  <link href="https://rsms.me/inter/inter.css" rel="stylesheet" />
+  <title>{% block title %}{{ title }}{% endblock %}</title>
+  {% block head %}{% endblock %}
+  <!-- Matomo -->
+  <script>
+    var _paq = window._paq = window._paq || [];
+    /* tracker methods like "setCustomDimension" should be called before "trackPageView" */
+    _paq.push(['trackPageView']);
+    _paq.push(['enableLinkTracking']);
+    (function () {
+      var u = "https://matomo.neutrino.su/";
+      _paq.push(['setTrackerUrl', u + 'matomo.php']);
+      _paq.push(['setSiteId', '3']);
+      var d = document, g = d.createElement('script'), s = d.getElementsByTagName('script')[0];
+      g.async = true; g.src = u + 'matomo.js'; s.parentNode.insertBefore(g, s);
+    })();
+  </script>
+  <noscript>
+    <p><img referrerpolicy="no-referrer-when-downgrade" src="https://matomo.neutrino.su/matomo.php?idsite=3&amp;rec=1"
+        style="border:0;" alt="" /></p>
+  </noscript>
+  <!-- End Matomo Code -->
+</head>
+
+<body class="dark:bg-neutral-900">
+  <div class="flex justify-center items-center mx-4 md:mx-6 lg:mx-8" id="content">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+
+</html>
