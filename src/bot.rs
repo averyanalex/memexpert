@@ -342,14 +342,13 @@ async fn handle_message(bot: Bot, msg: Message, db: Storage, states: StateStorag
                         db.update_meme(meme, updated_by).await?;
                     }
                     MemeEditAction::File => {
-                        todo!()
-                        // if try_set_file_from_msg(&msg, &mut meme)?.is_some() {
-                        //     db.update_meme(meme).await?;
-                        // } else {
-                        //     bot.send_message(msg.chat.id, "Нет файла или он не подходит")
-                        //         .await?;
-                        //     return Ok(());
-                        // }
+                        if try_set_file_from_msg(&msg, &mut meme)?.is_some() {
+                            db.update_meme(meme, updated_by).await?;
+                        } else {
+                            bot.send_message(msg.chat.id, "Нет файла или он не подходит")
+                                .await?;
+                            return Ok(());
+                        }
                     }
                     MemeEditAction::Publish | MemeEditAction::Draft | MemeEditAction::Trash => {
                         unreachable!()
