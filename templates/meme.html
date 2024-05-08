@@ -1,5 +1,8 @@
-{% extends "base.html" %} {% block title %}{{ title }}{% endblock %} {% block
-head %}
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block head %}
 <meta name="description" content="{{ caption }}" />
 <meta property="og:title" content="{{ title }}" />
 <meta property="og:description" content="{{ caption }}" />
@@ -35,7 +38,9 @@ head %}
 <meta property="og:image:height" content="{{ height }}" />
 {% endif %}
 <meta property="og:image:alt" content="{{ description }}" />
-{% endblock %} {% block content %}
+{% endblock %}
+
+{% block content %}
 <div itemscope itemtype="https://schema.org/{% if is_mime_video %}VideoObject{% else %}ImageObject{% endif %}"
     class="max-w-7xl flex flex-col gap-2 items-center">
     <h1 itemprop="name"
@@ -47,7 +52,7 @@ head %}
             <div class="flex justify-center items-center">
                 {% if is_mime_video %}
                 <video itemprop="contentUrl" src="/static/{{ filename }}" poster="/static/{{ thumb_filename }}"
-                    class="h-auto w-full max-w-full rounded-md shadow-lg shadow-gray-200 dark:shadow-gray-800"
+                    class="h-auto w-full max-w-full rounded-md shadow-md shadow-gray-200 dark:shadow-gray-800"
                     width="{{ width }}" height="{{ height }}" {% if is_animation %}loop muted autoplay{% else
                     %}controls{% endif %}>
                     Your browser doesn't support HTML5 video tag.
@@ -98,7 +103,7 @@ head %}
             {% else %}
             <meta itemprop="creditText" content="Источник мема неизвестен." />
             {% endif %}
-            <div class="flex flex-col items-center mb-3">
+            <div class="flex flex-col items-center mb-1">
                 <a download href="/static/{{ filename }}"
                     class="max-w-48 inline-flex items-center justify-center px-5 py-3 text-base font-medium text-center text-white bg-blue-700 rounded-md shadow-md hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 dark:focus:ring-blue-900">
                     <svg class="fill-current w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
@@ -106,6 +111,9 @@ head %}
                     </svg>
                     Скачать мем
                 </a>
+            </div>
+            <div class="mb-4 bg-slate-200 dark:bg-slate-800 rounded-md shadow-md shadow-gray-200 dark:shadow-gray-800">
+                {% include "tgbot.html" %}
             </div>
         </div>
     </div>

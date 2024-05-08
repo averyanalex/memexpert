@@ -29,6 +29,7 @@ pub async fn run_webserver(db: Storage, bot: Bot) -> Result<()> {
         .route("/:path", get(assets))
         .route("/static/:file", get(file))
         .route("/:language/:slug", get(meme))
+        .route("/", get(index))
         .route("/sitemap.xml", get(sitemap))
         .with_state(AppState { db, bot });
 
@@ -223,6 +224,24 @@ async fn meme(
     } else {
         Ok((StatusCode::NOT_FOUND, "meme not found").into_response())
     }
+}
+
+async fn index() -> Result<Response, AppError> {
+    let headers = [(header::CONTENT_LANGUAGE, "ru")];
+
+    Ok((
+        headers,
+        IndexTemplate {
+            language: "ru".to_string(),
+        },
+    )
+        .into_response())
+}
+
+#[derive(Template)]
+#[template(path = "index.html", whitespace = "preserve")]
+struct IndexTemplate {
+    language: String,
 }
 
 #[derive(Template)]

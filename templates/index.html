@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}MemXpert - поисковик мемов{% endblock %}
+
+{% block head %}
+<meta name="description" content="Телеграм-бот поиска мемов @memxpert" />
+<meta property="og:title" content="MemXpert - поисковик мемов" />
+<meta property="og:description" content="Телеграм-бот поиска мемов @memxpert" />
+<meta property="og:site_name" content="MemeXpert" />
+<meta property="og:url" content="https://memexpert.xyz/" />
+<meta property="og:locale" content="ru_RU" />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://memexpert.xyz/tgbot.jpg" />
+<meta property="og:image:secure_url" content="https://memexpert.xyz/tgbot.jpg" />
+<meta property="og:image:type" content="image/jpeg" />
+<meta property="og:image:width" content="1080" />
+<meta property="og:image:height" content="484" />
+<meta property="og:image:alt" content="Поиск мемов с помощью телеграм-бота MemXpert" />
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl flex flex-col gap-2 items-center">
+    <h1
+        class="my-3 font-extrabold leading-none tracking-tight text-gray-900 dark:text-gray-100 text-2xl md:text-3xl lg:text-4xl">
+        MemXpert - поисковик мемов</h1>
+    {% include "tgbot.html" %}
+</div>
+{% endblock %}

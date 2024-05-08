@@ -64,8 +64,6 @@
             {
               packages = with pkgs; [sea-orm-cli openssl alejandra];
 
-              dotenv.enable = true;
-
               languages.rust = {
                 enable = true;
                 channel = "nightly";
