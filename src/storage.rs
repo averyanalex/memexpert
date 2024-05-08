@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use entities::{
-    memes,
+    files_cache, memes,
     prelude::*,
     sea_orm_active_enums::{MediaType, PublishStatus},
     slug_redirects, tg_uses, translations, web_visits,
@@ -24,7 +24,7 @@ use sea_orm::{
     prelude::*, ActiveValue, ConnectOptions, Database, IntoActiveModel, QueryOrder, QuerySelect,
     TransactionTrait,
 };
-use teloxide::{types::Message, Bot};
+use teloxide::{net::Download, requests::Requester, types::Message, Bot};
 use tracing::log::LevelFilter;
 
 use crate::{
@@ -224,6 +224,11 @@ impl Storage {
         self.create_or_replace_meme_in_ms(&meme, &translations)
             .await?;
         self.create_or_replace_meme_in_qd(&meme, &translations)
+            .await?;
+
+        self.load_tg_file(&meme.tg_id, meme.content_length.try_into()?)
+            .await?;
+        self.load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
             .await?;
 
         Ok(control_msg)
@@ -498,5 +503,22 @@ impl Storage {
     pub async fn create_web_visit(&self, visit: web_visits::ActiveModel) -> Result<()> {
         WebVisits::insert(visit).exec(&self.dc).await?;
         Ok(())
+    }
+
+    pub async fn load_tg_file(&self, id: &str, size: usize) -> Result<Vec<u8>> {
+        if let Some(cached) = FilesCache::find_by_id(id).one(&self.dc).await? {
+            Ok(cached.data)
+        } else {
+            let mut dst = Vec::with_capacity(size);
+            let file = self.bot.get_file(id).await?;
+            self.bot.download_file(&file.path, &mut dst).await?;
+            files_cache::ActiveModel {
+                id: ActiveValue::set(id.to_owned()),
+                data: ActiveValue::set(dst.clone()),
+            }
+            .insert(&self.dc)
+            .await?;
+            Ok(dst)
+        }
     }
 }

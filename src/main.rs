@@ -71,7 +71,7 @@ async fn _main() -> Result<()> {
 
     let (bot_res, web_res) = tokio::join!(
         bot::run_bot(db.clone(), bot.clone()),
-        web::run_webserver(db, bot)
+        web::run_webserver(db)
     );
     bot_res?;
     web_res?;

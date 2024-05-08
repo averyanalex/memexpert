@@ -406,6 +406,7 @@ dependencies = [
  "bytes",
  "cookie",
  "futures-util",
+ "headers",
  "http 1.1.0",
  "http-body 1.0.0",
  "http-body-util",
@@ -416,6 +417,21 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "axum-range"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c30398a7f716ebdd7f3c8a4f7a7a6df48a30e002007fd57b2a7a00fac864bd"
+dependencies = [
+ "axum 0.7.5",
+ "axum-extra",
+ "bytes",
+ "futures",
+ "http-body 1.0.0",
+ "pin-project",
+ "tokio",
 ]
 
 [[package]]
@@ -1243,6 +1259,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "headers"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "322106e6bd0cba2d5ead589ddb8150a13d7c4217cf80d7c4f682ca994ccc6aa9"
+dependencies = [
+ "base64 0.21.7",
+ "bytes",
+ "headers-core",
+ "http 1.1.0",
+ "httpdate",
+ "mime",
+ "sha1",
+]
+
+[[package]]
+name = "headers-core"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54b4a22553d4242c49fddb9ba998a99962b5cc6f22cb5a3482bec22522403ce4"
+dependencies = [
+ "http 1.1.0",
+]
+
+[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1798,6 +1838,7 @@ dependencies = [
  "axum 0.7.5",
  "axum-client-ip",
  "axum-extra",
+ "axum-range",
  "chrono",
  "entities",
  "include_dir",

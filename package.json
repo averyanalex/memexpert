@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "format": "prettier --write --ignore-unknown .",
-    "gencss": "tailwindcss -i styles/tailwind.css -o assets/main.css"
+    "gencss": "tailwindcss -i styles/tailwind.css -o templates/main.css --minify"
   },
   "keywords": [],
   "author": "",

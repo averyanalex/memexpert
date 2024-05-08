@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use anyhow::{anyhow, Result};
 use askama::Template;
 use axum::{
@@ -8,30 +10,34 @@ use axum::{
     routing::get,
     Router,
 };
-use axum_extra::extract::{
-    cookie::{Cookie, SameSite},
-    CookieJar,
+use axum_extra::{
+    extract::{
+        cookie::{Cookie, SameSite},
+        CookieJar,
+    },
+    headers::Range,
+    TypedHeader,
 };
+use axum_range::{KnownSize, Ranged};
 use chrono::SecondsFormat;
 use entities::{sea_orm_active_enums::MediaType, web_visits};
 use include_dir::{include_dir, Dir};
 use itertools::Itertools;
 use rand::{distributions::Alphanumeric, Rng};
 use sea_orm::ActiveValue;
-use teloxide::{net::Download, requests::Requester, Bot};
 
 use crate::storage::Storage;
 
 static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
-pub async fn run_webserver(db: Storage, bot: Bot) -> Result<()> {
+pub async fn run_webserver(db: Storage) -> Result<()> {
     let app = Router::new()
         .route("/:path", get(assets))
         .route("/static/:file", get(file))
         .route("/:language/:slug", get(meme))
         .route("/", get(index))
         .route("/sitemap.xml", get(sitemap))
-        .with_state(AppState { db, bot });
+        .with_state(AppState { db });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await?;
@@ -41,7 +47,6 @@ pub async fn run_webserver(db: Storage, bot: Bot) -> Result<()> {
 #[derive(Clone)]
 struct AppState {
     db: Storage,
-    bot: Bot,
 }
 
 async fn sitemap(State(state): State<AppState>) -> Result<Response, AppError> {
@@ -91,6 +96,7 @@ async fn assets(Path(path): Path<String>) -> impl IntoResponse {
 async fn file(
     State(state): State<AppState>,
     Path(filename): Path<String>,
+    range: Option<TypedHeader<Range>>,
 ) -> Result<Response, AppError> {
     let splitten = filename.split('.').collect_vec();
     let slug = splitten[0];
@@ -105,9 +111,12 @@ async fn file(
         (meme.tg_id, meme.content_length)
     };
 
-    let file = state.bot.get_file(tg_id).await?;
-    let stream = state.bot.download_file_stream(&file.path);
-    let body = Body::from_stream(stream);
+    let file = state
+        .db
+        .load_tg_file(&tg_id, content_length.try_into()?)
+        .await?;
+    let body = KnownSize::seek(Cursor::new(file)).await?;
+    let range = range.map(|TypedHeader(range)| range);
 
     let headers = [
         (header::CACHE_CONTROL, "max-age=604800"),
@@ -116,10 +125,9 @@ async fn file(
             header::CONTENT_DISPOSITION,
             &format!("filename=\"{filename}\""),
         ),
-        (header::CONTENT_LENGTH, &content_length.to_string()),
     ];
 
-    Ok((headers, body).into_response())
+    Ok((headers, Ranged::new(range, body)).into_response())
 }
 
 fn get_header(headers: &HeaderMap, name: HeaderName) -> Option<String> {

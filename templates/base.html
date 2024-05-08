@@ -4,10 +4,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link href="/main.css" rel="stylesheet" />
-  <link href="https://rsms.me/inter/inter.css" rel="stylesheet" />
+  <style type="text/css">
+    @font-face {
+      font-family: InterVariable;
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/InterVariable.woff2') format('woff2');
+    }
+    {% include "main.css" %}
+  </style>
   <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml">
-  <link rel="icon" href="https://memexpert.xyz/favicon.ico" type="image/x-icon" />
+  <link rel="icon" href="/favicon.ico" type="image/x-icon" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">

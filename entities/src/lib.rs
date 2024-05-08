@@ -2,6 +2,7 @@
 
 pub mod prelude;
 
+pub mod files_cache;
 pub mod memes;
 pub mod sea_orm_active_enums;
 pub mod slug_redirects;
