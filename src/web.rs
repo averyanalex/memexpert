@@ -56,7 +56,10 @@ async fn sitemap(State(state): State<AppState>) -> Result<Response, AppError> {
         .into_iter()
         .map(|(m, trs)| SitemapMeme {
             slug: m.slug,
-            lastmod: m.last_edition_time.to_string(),
+            lastmod: m
+                .last_edition_time
+                .and_utc()
+                .to_rfc3339_opts(SecondsFormat::Secs, false),
             translations: trs
                 .into_iter()
                 .map(|tr| SitemapTranslation {
