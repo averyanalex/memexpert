@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
-    <loc>https://memexpert.xyz</loc>
+    <loc>https://memexpert.xyz/</loc>
   </url>
   {%- for meme in memes %}
   {%- for main_translation in meme.translations %}
