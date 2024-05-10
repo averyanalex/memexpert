@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://memexpert.xyz</loc>
   </url>
-  {% for meme in memes %}
+  {%- for meme in memes %}
+  {%- for main_translation in meme.translations %}
   <url>
-    <loc>https://memexpert.xyz/{{ meme.translations[0].language }}/{{ meme.slug }}</loc>
+    <loc>https://memexpert.xyz/{{ main_translation.language }}/{{ meme.slug }}</loc>
+    {%- for alt_translation in meme.translations %}
+    <xhtml:link rel="alternate" hreflang="{{ alt_translation.language }}" href="https://memexpert.xyz/{{ alt_translation.language }}/{{ meme.slug }}"/>
+    {%- endfor %}
     <lastmod>{{ meme.lastmod }}</lastmod>
   </url>
-  {% endfor %}
+  {%- endfor %}
+  {%- endfor %}
 </urlset>

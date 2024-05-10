@@ -250,13 +250,13 @@ async fn index() -> Result<Response, AppError> {
 }
 
 #[derive(Template)]
-#[template(path = "index.html", whitespace = "preserve")]
+#[template(path = "index.html")]
 struct IndexTemplate {
     language: String,
 }
 
 #[derive(Template)]
-#[template(path = "meme.html", whitespace = "preserve")]
+#[template(path = "meme.html")]
 struct MemeTemplate {
     id: i32,
     language: String,
@@ -283,7 +283,7 @@ struct MemeTemplate {
 }
 
 #[derive(Template)]
-#[template(path = "sitemap.xml", whitespace = "suppress")]
+#[template(path = "sitemap.xml")]
 struct SitemapTemplate {
     memes: Vec<SitemapMeme>,
 }
