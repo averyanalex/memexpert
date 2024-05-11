@@ -454,7 +454,6 @@ impl Storage {
         let memes = Memes::find()
             .filter(memes::Column::Id.is_in(ids.iter().map(|i| i.0)))
             .filter(memes::Column::PublishStatus.eq(PublishStatus::Published))
-            .limit(50)
             .order_by_asc(memes::Column::Id)
             .all(&self.dc)
             .await?;
@@ -467,6 +466,7 @@ impl Storage {
                     None
                 }
             })
+            .take(50)
             .collect();
         Ok(memes)
     }
