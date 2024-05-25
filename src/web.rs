@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::io::Cursor;
 
 use anyhow::{anyhow, Result};
@@ -36,7 +37,8 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
         .route("/static/:file", get(file))
         .route("/:language/:slug", get(meme))
         .route("/", get(index))
-        .route("/sitemap.xml", get(sitemap))
+        .route("/sitemap.xml", get(sitemap_xml))
+        .route("/sitemap.txt", get(sitemap_txt))
         .with_state(AppState { db });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -49,7 +51,7 @@ struct AppState {
     db: Storage,
 }
 
-async fn sitemap(State(state): State<AppState>) -> Result<Response, AppError> {
+async fn sitemap_xml(State(state): State<AppState>) -> Result<Response, AppError> {
     let memes = state.db.all_memes_with_translations().await?;
 
     let memes: Vec<_> = memes
@@ -70,8 +72,27 @@ async fn sitemap(State(state): State<AppState>) -> Result<Response, AppError> {
         .collect();
 
     Ok((
-        [(header::CONTENT_TYPE, mime::TEXT_XML.to_string())],
+        [(header::CONTENT_TYPE, "text/xml; charset=utf-8")],
         SitemapTemplate { memes },
+    )
+        .into_response())
+}
+
+async fn sitemap_txt(State(state): State<AppState>) -> Result<Response, AppError> {
+    let memes = state.db.all_memes_with_translations().await?;
+    let mut sitemap = String::new();
+    for (meme, translations) in memes {
+        for translation in translations {
+            writeln!(
+                &mut sitemap,
+                "https://memexpert.xyz/{}/{}",
+                translation.language, meme.slug
+            )?;
+        }
+    }
+    Ok((
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        sitemap,
     )
         .into_response())
 }
@@ -90,6 +111,10 @@ async fn assets(Path(path): Path<String>) -> impl IntoResponse {
             .header(
                 header::CONTENT_TYPE,
                 HeaderValue::from_str(mime_type.as_ref()).unwrap(),
+            )
+            .header(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("max-age=86400"),
             )
             .body(Body::from(file.contents()))
             .unwrap(),
