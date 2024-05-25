@@ -14,8 +14,9 @@ use sea_orm::{ActiveModelBehavior, ActiveValue};
 use teloxide::{
     prelude::*,
     types::{
-        FileMeta, InlineQueryResult, InlineQueryResultCachedGif, InlineQueryResultCachedPhoto,
-        InlineQueryResultCachedVideo, KeyboardButton, KeyboardMarkup, KeyboardRemove, ParseMode,
+        FileMeta, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
+        InlineQueryResultCachedGif, InlineQueryResultCachedPhoto, InlineQueryResultCachedVideo,
+        KeyboardButton, KeyboardMarkup, KeyboardRemove, ParseMode,
     },
 };
 use translit::ToLatin;
@@ -361,6 +362,10 @@ async fn handle_message(bot: Bot, msg: Message, db: Storage, states: StateStorag
                 states.lock().unwrap().remove(&user);
             }
         }
+    } else {
+        bot.send_message(msg.chat.id, "Добро пожаловать в поисковик мемов!\nЧтобы найти и отправить мем, \
+        введите @memexpertbot и поисковый запрос в поле ввода сообщения в любом чате. Например, @memexpertbot вопрос огурец")
+        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::switch_inline_query("Искать мемы", "")]])).await?;
     }
     Ok(())
 }
