@@ -153,14 +153,18 @@ async fn handle_message(bot: Bot, msg: Message, db: Storage, states: StateStorag
         .await?
         .is_present()
     {
-        if let Some(text) = msg.text()
-            && text == "Отмена"
-        {
-            states.lock().unwrap().remove(&user);
-            bot.send_message(msg.chat.id, "Отменено")
-                .reply_markup(KeyboardRemove::new())
-                .await?;
-            return Ok(());
+        if let Some(text) = msg.text() {
+            if text == "Отмена" {
+                states.lock().unwrap().remove(&user);
+                bot.send_message(msg.chat.id, "Отменено")
+                    .reply_markup(KeyboardRemove::new())
+                    .await?;
+                return Ok(());
+            } else if text == "/reindex" {
+                db.reindex_all().await?;
+                bot.send_message(msg.chat.id, "Reindex completed").await?;
+                return Ok(());
+            }
         }
 
         match state {

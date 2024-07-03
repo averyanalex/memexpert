@@ -28,7 +28,7 @@ migration.path = "migration"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-sentry = { version = "0.32", default-features = false, features = [
+sentry = { version = "0.34.0", default-features = false, features = [
     "backtrace",
     "contexts",
     "panic",
@@ -48,13 +48,13 @@ axum-range = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.12", features = ["json", "brotli", "native-tls"] }
 
-meilisearch-sdk = "0.26.0"
-qdrant-client = "1.9.0"
+meilisearch-sdk = "0.27.0"
+qdrant-client = { version = "1.10.1", default-features = false }
 
 anyhow = "1.0"
 chrono = "0.4"
 include_dir = "0.7.3"
-itertools = "0.12.1"
+itertools = "0.13.0"
 mime = "0.3"
 mime_guess = "2.0.4"
 rand = "0.8"

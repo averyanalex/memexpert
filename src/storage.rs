@@ -4,21 +4,20 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use entities::{
-    files_cache, memes,
-    prelude::*,
-    sea_orm_active_enums::{MediaType, PublishStatus},
-    slug_redirects, tg_uses, translations, web_visits,
+    files_cache, memes, prelude::*, sea_orm_active_enums::PublishStatus, slug_redirects, tg_uses,
+    translations, web_visits,
 };
 use itertools::Itertools;
 use meilisearch_sdk::client::Client;
 use migration::{Migrator, MigratorTrait, OnConflict};
 use qdrant_client::{
-    client::{Payload, QdrantClient},
+    client::Payload,
     qdrant::{
-        point_id::PointIdOptions, points_selector::PointsSelectorOneOf, vectors_config::Config,
-        CreateCollection, Distance, PointStruct, PointsIdsList, PointsSelector, SearchPoints,
-        VectorParams, VectorsConfig,
+        point_id::PointIdOptions, CreateCollectionBuilder, DeletePointsBuilder, Distance,
+        PointStruct, PointsIdsList, SearchParamsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
+        VectorParamsBuilder,
     },
+    Qdrant,
 };
 use sea_orm::{
     prelude::*, ActiveValue, ConnectOptions, Database, IntoActiveModel, QueryOrder, QuerySelect,
@@ -37,7 +36,7 @@ use crate::{
 pub struct Storage {
     dc: DatabaseConnection,
     ms: Client,
-    qd: Arc<QdrantClient>,
+    qd: Arc<Qdrant>,
     bot: Bot,
     yandex: Arc<Yandex>,
 }
@@ -54,30 +53,62 @@ impl Storage {
         Migrator::up(&dc, None).await?;
 
         let ms = Client::new("http://127.0.0.1:7700", None::<String>)?;
+        let qd = Arc::new(Qdrant::from_url("http://127.0.0.1:6334").build()?);
 
-        let qd = Arc::new(QdrantClient::from_url("http://127.0.0.1:6334").build()?);
-        if !qd.collection_exists("memexpert-text").await? {
-            qd.create_collection(&CreateCollection {
-                collection_name: "memexpert-text".to_owned(),
-                vectors_config: Some(VectorsConfig {
-                    config: Some(Config::Params(VectorParams {
-                        size: 256,
-                        distance: Distance::Cosine.into(),
-                        ..Default::default()
-                    })),
-                }),
-                ..Default::default()
-            })
-            .await?;
-        }
-
-        Ok(Self {
+        let storage = Self {
             dc,
             ms,
             qd,
             bot,
             yandex,
-        })
+        };
+        storage.create_indexes().await?;
+
+        Ok(storage)
+    }
+
+    async fn create_indexes(&self) -> Result<()> {
+        if !self.qd.collection_exists("memexpert-text").await? {
+            self.qd
+                .create_collection(
+                    CreateCollectionBuilder::new("memexpert-text")
+                        .vectors_config(VectorParamsBuilder::new(256, Distance::Cosine)),
+                )
+                .await?;
+        }
+
+        if !self
+            .ms
+            .list_all_indexes()
+            .await?
+            .results
+            .into_iter()
+            .any(|i| i.uid == "memexpert")
+        {
+            self.ms.create_index("memexpert", Some("id")).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn reindex_all(&self) -> Result<()> {
+        self.create_indexes().await?;
+        self.qd.delete_collection("memexpert-text").await?;
+        self.ms.delete_index("memexpert").await?;
+        self.create_indexes().await?;
+
+        for (meme, translations) in Memes::find()
+            .find_with_related(Translations)
+            .all(&self.dc)
+            .await?
+        {
+            self.create_or_replace_meme_in_ms(&meme, &translations)
+                .await?;
+            self.create_or_replace_meme_in_qd(&meme, &translations)
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn create_or_replace_meme_in_ms(
@@ -122,28 +153,26 @@ impl Storage {
         if meme.publish_status == PublishStatus::Published {
             let text_embedding = self.get_text_embedding(meme, translations).await?;
             self.qd
-                .upsert_points_blocking(
-                    "memexpert-text",
-                    None,
-                    vec![PointStruct::new(
-                        u64::try_from(meme.id)?,
-                        text_embedding,
-                        Payload::new(),
-                    )],
-                    None,
+                .upsert_points(
+                    UpsertPointsBuilder::new(
+                        "memexpert-text",
+                        vec![PointStruct::new(
+                            u64::try_from(meme.id)?,
+                            text_embedding,
+                            Payload::new(),
+                        )],
+                    )
+                    .wait(true),
                 )
                 .await?;
         } else {
             self.qd
-                .delete_points_blocking(
-                    "memexpert-text",
-                    None,
-                    &PointsSelector {
-                        points_selector_one_of: Some(PointsSelectorOneOf::Points(PointsIdsList {
+                .delete_points(
+                    DeletePointsBuilder::new("memexpert-text")
+                        .points(PointsIdsList {
                             ids: vec![u64::try_from(meme.id)?.into()],
-                        })),
-                    },
-                    None,
+                        })
+                        .wait(true),
                 )
                 .await?;
         }
@@ -165,27 +194,15 @@ impl Storage {
             }
         }
 
-        let meme_type = match meme.media_type {
-            MediaType::Animation => "gif",
-            MediaType::Photo => "image",
-            MediaType::Video => "video",
-        };
-        let text_on_meme = if let Some(text) = &meme.text {
-            format!("Text on meme: {}", add_dot_if_needed(text))
-        } else {
-            "There is no text on the meme.".to_string()
-        };
-
-        let mut text = format!(
-            "Meme id: {}.\nMeme type: {meme_type}.\n{text_on_meme}",
-            meme.slug
-        );
+        let mut text = meme.text.clone().unwrap_or_default();
 
         for translation in translations {
+            if !text.is_empty() {
+                write!(text, "\n\n")?;
+            }
             write!(
                 text,
-                "\n\nTranslation for {} language:\nTitle: {}\nCaption: {}\nDescription: {}",
-                translation.language,
+                "{}\n{}\n{}",
                 add_dot_if_needed(&translation.title),
                 add_dot_if_needed(&translation.caption),
                 add_dot_if_needed(&translation.description)
@@ -395,12 +412,10 @@ impl Storage {
                         .await?;
                     Ok(self
                         .qd
-                        .search_points(&SearchPoints {
-                            collection_name: "memexpert-text".to_owned(),
-                            vector: query_embedding,
-                            limit: 100,
-                            ..Default::default()
-                        })
+                        .search_points(
+                            SearchPointsBuilder::new("memexpert-text", query_embedding, 100)
+                                .params(SearchParamsBuilder::default().hnsw_ef(128).exact(false)),
+                        )
                         .await?
                         .result)
                 },

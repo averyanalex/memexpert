@@ -34,7 +34,7 @@
           buildInputs = with pkgs; [openssl];
 
           nativeBuildInputs =
-            [pkgs.pkg-config pkgs.fenix.default.toolchain]
+            [pkgs.makeWrapper pkgs.pkg-config pkgs.fenix.default.toolchain]
             ++ [
               (importCargo {
                 lockFile = ./Cargo.lock;
@@ -45,6 +45,13 @@
 
           buildPhase = ''
             cargo build --release --offline
+          '';
+
+          postFixup = ''
+            wrapProgram $out/bin/memexpert \
+               --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [
+              pkgs.openssl
+            ]}
           '';
 
           installPhase = ''
