@@ -1,21 +1,27 @@
 use std::env;
 
 use anyhow::Result;
-use reqwest::Client;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use serde::{Deserialize, Serialize};
 
 pub struct Yandex {
     ycl_api_key: String,
     ycl_folder: String,
-    client: Client,
+    client: ClientWithMiddleware,
 }
 
 impl Yandex {
     pub fn new() -> Result<Self> {
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+        let client = ClientBuilder::new(reqwest::Client::new())
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build();
+
         Ok(Self {
             ycl_api_key: env::var("YCL_API_KEY")?,
             ycl_folder: env::var("YCL_FOLDER")?,
-            client: Client::new(),
+            client,
         })
     }
 

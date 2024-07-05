@@ -24,6 +24,7 @@ use sea_orm::{
     TransactionTrait,
 };
 use teloxide::{net::Download, requests::Requester, types::Message, Bot};
+use tokio::time;
 use tracing::log::LevelFilter;
 
 use crate::{
@@ -104,6 +105,7 @@ impl Storage {
         {
             self.create_or_replace_meme_in_ms(&meme, &translations)
                 .await?;
+            time::sleep(time::Duration::from_millis(200)).await;
             self.create_or_replace_meme_in_qd(&meme, &translations)
                 .await?;
         }
