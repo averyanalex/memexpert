@@ -67,10 +67,10 @@ fn main() -> Result<()> {
 async fn _main() -> Result<()> {
     let bot = teloxide::Bot::from_env();
     let yandex = Arc::new(yandex::Yandex::new()?);
-    let db = Storage::new(bot.clone(), yandex).await?;
+    let db = Storage::new(bot.clone(), yandex.clone()).await?;
 
     let (bot_res, web_res) = tokio::join!(
-        bot::run_bot(db.clone(), bot.clone()),
+        bot::run_bot(db.clone(), yandex, bot.clone()),
         web::run_webserver(db)
     );
     bot_res?;

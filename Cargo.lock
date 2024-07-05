@@ -1928,6 +1928,7 @@ dependencies = [
  "axum-client-ip",
  "axum-extra",
  "axum-range",
+ "base64 0.22.1",
  "chrono",
  "entities",
  "include_dir",

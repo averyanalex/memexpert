@@ -24,9 +24,10 @@ use translit::ToLatin;
 use crate::{
     control::{MemeEditAction, MemeEditCallback},
     storage::Storage,
+    yandex::Yandex,
 };
 
-pub async fn run_bot(db: Storage, bot: Bot) -> Result<()> {
+pub async fn run_bot(db: Storage, yandex: Arc<Yandex>, bot: Bot) -> Result<()> {
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(handle_message))
         .branch(Update::filter_callback_query().endpoint(handle_callback_query))
@@ -39,7 +40,7 @@ pub async fn run_bot(db: Storage, bot: Bot) -> Result<()> {
     let states = StateStorage::default();
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .dependencies(dptree::deps![db.clone(), states])
+        .dependencies(dptree::deps![db.clone(), states, yandex])
         .enable_ctrlc_handler()
         .build();
 
@@ -138,7 +139,13 @@ fn try_set_file_from_msg(msg: &Message, meme: &mut memes::ActiveModel) -> Result
     }
 }
 
-async fn handle_message(bot: Bot, msg: Message, db: Storage, states: StateStorage) -> Result<()> {
+async fn handle_message(
+    bot: Bot,
+    msg: Message,
+    db: Storage,
+    yandex: Arc<Yandex>,
+    states: StateStorage,
+) -> Result<()> {
     let admin_chat_id: i64 = std::env::var("ADMIN_CHANNEL_ID")?.parse()?;
     let user = msg.from().context("no from")?.id;
     let state = states
@@ -181,6 +188,13 @@ async fn handle_message(bot: Bot, msg: Message, db: Storage, states: StateStorag
                     } else {
                         meme.created_by = ActiveValue::set(msg.chat.id.0);
                         meme.last_edited_by = ActiveValue::set(msg.chat.id.0);
+
+                        let ocr_text = yandex
+                            .ocr(db.load_tg_file(&file.id, file.size.try_into()?).await?)
+                            .await?;
+                        bot.send_message(msg.chat.id, format!("Распознанный текст:\n{ocr_text}"))
+                            .await?;
+
                         bot.send_message(msg.chat.id, "Теперь укажите язык для первого описания")
                             .reply_markup(make_keyboard(&["ru", "en"]))
                             .await?;
