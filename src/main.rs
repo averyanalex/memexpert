@@ -11,6 +11,7 @@ use tracing_subscriber::prelude::*;
 mod bot;
 mod control;
 mod ms_models;
+mod openai;
 mod storage;
 mod web;
 mod yandex;
@@ -67,10 +68,11 @@ fn main() -> Result<()> {
 async fn _main() -> Result<()> {
     let bot = teloxide::Bot::from_env();
     let yandex = Arc::new(yandex::Yandex::new()?);
-    let db = Storage::new(bot.clone(), yandex.clone()).await?;
+    let openai = Arc::new(openai::OpenAi::new());
+    let db = Storage::new(bot.clone(), openai).await?;
 
     let (bot_res, web_res) = tokio::join!(
-        bot::run_bot(db.clone(), yandex, bot.clone()),
+        bot::run_bot(db.clone(), yandex, bot),
         web::run_webserver(db)
     );
     bot_res?;

@@ -18,7 +18,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [dependencies]
-teloxide = { version = "0.12", features = ["macros"] }
+teloxide = { git = "https://github.com/teloxide/teloxide.git", features = ["macros"] }
 
 tokio.workspace = true
 sea-orm.workspace = true
@@ -62,3 +62,4 @@ mime_guess = "2.0.4"
 rand = "0.8"
 translit = "0.5"
 base64 = "0.22.1"
+async-openai = "0.23.3"

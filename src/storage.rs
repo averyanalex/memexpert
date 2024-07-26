@@ -30,7 +30,7 @@ use tracing::log::LevelFilter;
 use crate::{
     control::refresh_meme_control_msg,
     ms_models::{MsMeme, MsMemeResult, MsMemeTranslation},
-    yandex::Yandex,
+    openai::OpenAi,
 };
 
 #[derive(Clone)]
@@ -39,11 +39,11 @@ pub struct Storage {
     ms: Client,
     qd: Arc<Qdrant>,
     bot: Bot,
-    yandex: Arc<Yandex>,
+    openai: Arc<OpenAi>,
 }
 
 impl Storage {
-    pub async fn new(bot: Bot, yandex: Arc<Yandex>) -> Result<Self> {
+    pub async fn new(bot: Bot, openai: Arc<OpenAi>) -> Result<Self> {
         let db_url = std::env::var("DATABASE_URL")?;
 
         let mut conn_options = ConnectOptions::new(db_url);
@@ -61,7 +61,7 @@ impl Storage {
             ms,
             qd,
             bot,
-            yandex,
+            openai,
         };
         storage.create_indexes().await?;
 
@@ -73,7 +73,7 @@ impl Storage {
             self.qd
                 .create_collection(
                     CreateCollectionBuilder::new("memexpert-text")
-                        .vectors_config(VectorParamsBuilder::new(256, Distance::Cosine)),
+                        .vectors_config(VectorParamsBuilder::new(1536, Distance::Cosine)),
                 )
                 .await?;
         }
@@ -211,7 +211,7 @@ impl Storage {
             )?;
         }
 
-        self.yandex.text_embedding(text, "text-search-doc").await
+        self.openai.embedding(text).await
     }
 
     async fn process_meme_update(
@@ -408,10 +408,7 @@ impl Storage {
         } else {
             let (qd_results, ms_results): (Result<_>, _) = tokio::join!(
                 async {
-                    let query_embedding = self
-                        .yandex
-                        .text_embedding(query, "text-search-query")
-                        .await?;
+                    let query_embedding = self.openai.embedding(query).await?;
                     Ok(self
                         .qd
                         .search_points(

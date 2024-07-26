@@ -16,7 +16,7 @@ use teloxide::{
     types::{
         FileMeta, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
         InlineQueryResultCachedGif, InlineQueryResultCachedPhoto, InlineQueryResultCachedVideo,
-        KeyboardButton, KeyboardMarkup, KeyboardRemove, ParseMode,
+        KeyboardButton, KeyboardMarkup, KeyboardRemove, ParseMode, PhotoSize,
     },
 };
 use translit::ToLatin;
@@ -80,10 +80,13 @@ pub enum MemeCreationStep {
 }
 
 fn make_keyboard(buttons: &[&str]) -> KeyboardMarkup {
-    KeyboardMarkup::new([buttons.iter().map(|b| KeyboardButton::new(*b))]).resize_keyboard(true)
+    KeyboardMarkup::new([buttons.iter().map(|b| KeyboardButton::new(*b))]).resize_keyboard()
 }
 
-fn try_set_file_from_msg(msg: &Message, meme: &mut memes::ActiveModel) -> Result<Option<FileMeta>> {
+fn try_set_file_from_msg(
+    msg: &Message,
+    meme: &mut memes::ActiveModel,
+) -> Result<Option<(FileMeta, PhotoSize)>> {
     if let Some((file, thumb)) = if let Some([.., photo]) = msg.photo() {
         meme.media_type = ActiveValue::set(MediaType::Photo);
         meme.mime_type = ActiveValue::set(mime::IMAGE_JPEG.to_string());
@@ -102,8 +105,11 @@ fn try_set_file_from_msg(msg: &Message, meme: &mut memes::ActiveModel) -> Result
         );
         meme.width = ActiveValue::set(video.width.try_into()?);
         meme.height = ActiveValue::set(video.height.try_into()?);
-        meme.duration = ActiveValue::set(video.duration.try_into()?);
-        Some((&video.file, video.thumb.clone().context("no video thumb")?))
+        meme.duration = ActiveValue::set(video.duration.seconds().try_into()?);
+        Some((
+            &video.file,
+            video.thumbnail.clone().context("no video thumb")?,
+        ))
     } else if let Some(animation) = msg.animation() {
         meme.media_type = ActiveValue::set(MediaType::Animation);
         meme.mime_type = ActiveValue::set(
@@ -115,10 +121,10 @@ fn try_set_file_from_msg(msg: &Message, meme: &mut memes::ActiveModel) -> Result
         );
         meme.width = ActiveValue::set(animation.width.try_into()?);
         meme.height = ActiveValue::set(animation.height.try_into()?);
-        meme.duration = ActiveValue::set(animation.duration.try_into()?);
+        meme.duration = ActiveValue::set(animation.duration.seconds().try_into()?);
         Some((
             &animation.file,
-            animation.thumb.clone().context("no animation thumb")?,
+            animation.thumbnail.clone().context("no animation thumb")?,
         ))
     } else {
         None
@@ -130,10 +136,10 @@ fn try_set_file_from_msg(msg: &Message, meme: &mut memes::ActiveModel) -> Result
         meme.thumb_mime_type = ActiveValue::set(mime::IMAGE_JPEG.to_string());
         meme.thumb_width = ActiveValue::set(thumb.width.try_into()?);
         meme.thumb_height = ActiveValue::set(thumb.height.try_into()?);
-        meme.thumb_tg_id = ActiveValue::set(thumb.file.id);
+        meme.thumb_tg_id = ActiveValue::set(thumb.file.id.clone());
         meme.thumb_content_length = ActiveValue::set(thumb.file.size.try_into()?);
 
-        Ok(Some(file.clone()))
+        Ok(Some((file.clone(), thumb)))
     } else {
         Ok(None)
     }
@@ -178,7 +184,7 @@ async fn handle_message(
             State::Start => {
                 let mut meme = memes::ActiveModel::new();
 
-                if let Some(file) = try_set_file_from_msg(&msg, &mut meme)? {
+                if let Some((file, thumb)) = try_set_file_from_msg(&msg, &mut meme)? {
                     if let Some(meme) = db.meme_by_tg_unique_id(&file.unique_id).await? {
                         bot.send_message(
                             msg.chat.id,
@@ -190,7 +196,10 @@ async fn handle_message(
                         meme.last_edited_by = ActiveValue::set(msg.chat.id.0);
 
                         let ocr_text = yandex
-                            .ocr(db.load_tg_file(&file.id, file.size.try_into()?).await?)
+                            .ocr(
+                                db.load_tg_file(&thumb.file.id, thumb.file.size.try_into()?)
+                                    .await?,
+                            )
                             .await?;
                         bot.send_message(msg.chat.id, format!("Распознанный текст:\n{ocr_text}"))
                             .await?;
