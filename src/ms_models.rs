@@ -1,17 +1,12 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct MsMeme {
     pub id: i32,
     pub text: Option<String>,
     pub translations: HashMap<String, MsMemeTranslation>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MsMemeResult {
-    pub id: i32,
 }
 
 #[derive(Serialize)]

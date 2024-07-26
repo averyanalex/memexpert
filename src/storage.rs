@@ -1,5 +1,5 @@
-use std::fmt::Write;
 use std::sync::Arc;
+use std::{collections::HashMap, fmt::Write};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -10,12 +10,12 @@ use entities::{
 use itertools::Itertools;
 use meilisearch_sdk::client::Client;
 use migration::{Migrator, MigratorTrait, OnConflict};
+use qdrant_client::qdrant::{Fusion, PrefetchQueryBuilder, Query, QueryPointsBuilder};
 use qdrant_client::{
     client::Payload,
     qdrant::{
         point_id::PointIdOptions, CreateCollectionBuilder, DeletePointsBuilder, Distance,
-        PointStruct, PointsIdsList, SearchParamsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
-        VectorParamsBuilder,
+        PointStruct, PointsIdsList, UpsertPointsBuilder, VectorParamsBuilder, VectorsConfigBuilder,
     },
     Qdrant,
 };
@@ -28,8 +28,9 @@ use tokio::time;
 use tracing::log::LevelFilter;
 
 use crate::{
+    aibox::AiBox,
     control::refresh_meme_control_msg,
-    ms_models::{MsMeme, MsMemeResult, MsMemeTranslation},
+    ms_models::{MsMeme, MsMemeTranslation},
     openai::OpenAi,
 };
 
@@ -40,10 +41,11 @@ pub struct Storage {
     qd: Arc<Qdrant>,
     bot: Bot,
     openai: Arc<OpenAi>,
+    aibox: Arc<AiBox>,
 }
 
 impl Storage {
-    pub async fn new(bot: Bot, openai: Arc<OpenAi>) -> Result<Self> {
+    pub async fn new(bot: Bot, openai: Arc<OpenAi>, aibox: Arc<AiBox>) -> Result<Self> {
         let db_url = std::env::var("DATABASE_URL")?;
 
         let mut conn_options = ConnectOptions::new(db_url);
@@ -62,6 +64,7 @@ impl Storage {
             qd,
             bot,
             openai,
+            aibox,
         };
         storage.create_indexes().await?;
 
@@ -69,11 +72,18 @@ impl Storage {
     }
 
     async fn create_indexes(&self) -> Result<()> {
-        if !self.qd.collection_exists("memexpert-text").await? {
+        if !self.qd.collection_exists("memexpert").await? {
+            let mut vectors_config = VectorsConfigBuilder::default();
+            vectors_config.add_named_vector_params(
+                "text-dense",
+                VectorParamsBuilder::new(1536, Distance::Cosine),
+            );
+            vectors_config
+                .add_named_vector_params("clip", VectorParamsBuilder::new(1152, Distance::Cosine));
+
             self.qd
                 .create_collection(
-                    CreateCollectionBuilder::new("memexpert-text")
-                        .vectors_config(VectorParamsBuilder::new(1536, Distance::Cosine)),
+                    CreateCollectionBuilder::new("memexpert").vectors_config(vectors_config),
                 )
                 .await?;
         }
@@ -94,7 +104,7 @@ impl Storage {
 
     pub async fn reindex_all(&self) -> Result<()> {
         self.create_indexes().await?;
-        self.qd.delete_collection("memexpert-text").await?;
+        self.qd.delete_collection("memexpert").await?;
         self.ms.delete_index("memexpert").await?;
         self.create_indexes().await?;
 
@@ -105,7 +115,7 @@ impl Storage {
         {
             self.create_or_replace_meme_in_ms(&meme, &translations)
                 .await?;
-            time::sleep(time::Duration::from_millis(200)).await;
+            time::sleep(time::Duration::from_millis(100)).await;
             self.create_or_replace_meme_in_qd(&meme, &translations)
                 .await?;
         }
@@ -153,14 +163,23 @@ impl Storage {
         translations: &[translations::Model],
     ) -> Result<()> {
         if meme.publish_status == PublishStatus::Published {
-            let text_embedding = self.get_text_embedding(meme, translations).await?;
+            let (text_embedding, clip_embedding) = tokio::join!(
+                self.get_text_embedding(meme, translations),
+                self.get_clip_image_embedding(meme)
+            );
+
             self.qd
                 .upsert_points(
                     UpsertPointsBuilder::new(
-                        "memexpert-text",
+                        "memexpert",
                         vec![PointStruct::new(
                             u64::try_from(meme.id)?,
-                            text_embedding,
+                            [
+                                ("text-dense".to_owned(), text_embedding?),
+                                ("clip".to_owned(), clip_embedding?),
+                            ]
+                            .into_iter()
+                            .collect::<HashMap<_, _>>(),
                             Payload::new(),
                         )],
                     )
@@ -170,7 +189,7 @@ impl Storage {
         } else {
             self.qd
                 .delete_points(
-                    DeletePointsBuilder::new("memexpert-text")
+                    DeletePointsBuilder::new("memexpert")
                         .points(PointsIdsList {
                             ids: vec![u64::try_from(meme.id)?.into()],
                         })
@@ -204,14 +223,21 @@ impl Storage {
             }
             write!(
                 text,
-                "{}\n{}\n{}",
+                "{}\n{}",
                 add_dot_if_needed(&translation.title),
                 add_dot_if_needed(&translation.caption),
-                add_dot_if_needed(&translation.description)
             )?;
         }
 
         self.openai.embedding(text).await
+    }
+
+    async fn get_clip_image_embedding(&self, meme: &memes::Model) -> Result<Vec<f32>> {
+        let thumb = self
+            .load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
+            .await?;
+
+        self.aibox.clip_image(thumb).await
     }
 
     async fn process_meme_update(
@@ -406,31 +432,35 @@ impl Storage {
                 .map(|i| (i, 'r'))
                 .collect_vec()
         } else {
-            let (qd_results, ms_results): (Result<_>, _) = tokio::join!(
-                async {
-                    let query_embedding = self.openai.embedding(query).await?;
-                    Ok(self
-                        .qd
-                        .search_points(
-                            SearchPointsBuilder::new("memexpert-text", query_embedding, 100)
-                                .params(SearchParamsBuilder::default().hnsw_ef(128).exact(false)),
-                        )
-                        .await?
-                        .result)
-                },
-                async {
-                    self.ms
-                        .index("memexpert")
-                        .search()
-                        .with_query(query)
-                        .with_limit(100)
-                        .with_show_ranking_score(true)
-                        .execute::<MsMemeResult>()
-                        .await
-                }
-            );
+            let (text_embedding, clip_embedding): (Result<_>, Result<_>) =
+                tokio::join!(self.openai.embedding(query), async {
+                    let translated_query = self.aibox.translation(query).await?;
+                    self.aibox.clip_text(&translated_query).await
+                });
 
-            let qd_ids_scores = qd_results?
+            let qd_results = self
+                .qd
+                .query(
+                    QueryPointsBuilder::new("memexpert")
+                        .add_prefetch(
+                            PrefetchQueryBuilder::default()
+                                .query(Query::new_nearest(text_embedding?))
+                                .using("text-dense")
+                                .limit(200u32),
+                        )
+                        .add_prefetch(
+                            PrefetchQueryBuilder::default()
+                                .query(Query::new_nearest(clip_embedding?))
+                                .using("clip")
+                                .limit(200u32),
+                        )
+                        .query(Query::new_fusion(Fusion::Rrf))
+                        .limit(100),
+                )
+                .await?;
+
+            let mut qd_ids_scores = qd_results
+                .result
                 .into_iter()
                 .map(|r| {
                     (
@@ -439,29 +469,16 @@ impl Storage {
                             PointIdOptions::Uuid(_) => -1,
                         },
                         r.score,
-                        't',
+                        'q',
                     )
                 })
                 .collect_vec();
-            let mut ms_ids_scores = ms_results?
-                .hits
-                .into_iter()
-                .map(|r| (r.result.id, r.ranking_score.unwrap_or(0.0) as f32, 'm'))
-                .collect_vec();
 
-            let ms_coef = qd_ids_scores.iter().map(|r| r.1).next().unwrap_or(0.5)
-                / ms_ids_scores.iter().map(|r| r.1).next().unwrap_or(1.0);
-            for ids in &mut ms_ids_scores {
-                ids.1 = ids.1 * ms_coef - 0.01;
-            }
-
-            let mut ids_scores = qd_ids_scores;
-            ids_scores.extend(ms_ids_scores);
-            ids_scores.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-            ids_scores
+            qd_ids_scores.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            qd_ids_scores
                 .into_iter()
                 .map(|i| (i.0, i.2))
-                .unique_by(|i| i.0)
+                .filter(|(i, _)| *i != -1)
                 .collect_vec()
         };
 

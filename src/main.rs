@@ -8,6 +8,7 @@ use storage::Storage;
 use tracing::*;
 use tracing_subscriber::prelude::*;
 
+mod aibox;
 mod bot;
 mod control;
 mod ms_models;
@@ -69,11 +70,12 @@ async fn _main() -> Result<()> {
     let bot = teloxide::Bot::from_env();
     let yandex = Arc::new(yandex::Yandex::new()?);
     let openai = Arc::new(openai::OpenAi::new());
-    let db = Storage::new(bot.clone(), openai).await?;
+    let aibox = Arc::new(aibox::AiBox::new());
+    let storage = Storage::new(bot.clone(), openai, aibox).await?;
 
     let (bot_res, web_res) = tokio::join!(
-        bot::run_bot(db.clone(), yandex, bot),
-        web::run_webserver(db)
+        bot::run_bot(storage.clone(), yandex, bot),
+        web::run_webserver(storage)
     );
     bot_res?;
     web_res?;
