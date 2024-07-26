@@ -6,7 +6,8 @@
     devenv.inputs.nixpkgs.follows = "nixpkgs";
     fenix.url = "github:nix-community/fenix";
     fenix.inputs.nixpkgs.follows = "nixpkgs";
-    import-cargo.url = "github:edolstra/import-cargo";
+    crane.url = "github:ipetkov/crane";
+    crane.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = {
@@ -15,7 +16,7 @@
     devenv,
     systems,
     fenix,
-    import-cargo,
+    crane,
     ...
   } @ inputs: let
     forEachSystem = nixpkgs.lib.genAttrs (import systems);
@@ -25,38 +26,14 @@
       default = let
         overlays = [fenix.overlays.default];
         pkgs = import nixpkgs {inherit system overlays;};
-        inherit (import-cargo.builders) importCargo;
+        craneLib = (crane.mkLib pkgs).overrideToolchain (p: pkgs.fenix.minimal.toolchain);
       in
-        pkgs.stdenv.mkDerivation {
-          name = "memexpert";
-          src = self;
+        craneLib.buildPackage {
+          src = ./.;
+          strictDeps = true;
 
-          buildInputs = with pkgs; [openssl];
-
-          nativeBuildInputs =
-            [pkgs.makeWrapper pkgs.pkg-config pkgs.fenix.default.toolchain]
-            ++ [
-              (importCargo {
-                lockFile = ./Cargo.lock;
-                inherit pkgs;
-              })
-              .cargoHome
-            ];
-
-          buildPhase = ''
-            cargo build --release --offline
-          '';
-
-          postFixup = ''
-            wrapProgram $out/bin/memexpert \
-               --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [
-              pkgs.openssl
-            ]}
-          '';
-
-          installPhase = ''
-            install -Dm775 ./target/release/memexpert $out/bin/memexpert
-          '';
+          nativeBuildInputs = with pkgs; [autoPatchelfHook pkg-config];
+          buildInputs = with pkgs; [openssl stdenv.cc.cc.lib];
         };
     });
 
