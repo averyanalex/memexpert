@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use chrono::Utc;
 use entities::{
     files_cache, memes, prelude::*, sea_orm_active_enums::PublishStatus, slug_redirects, tg_uses,
@@ -19,8 +19,7 @@ use qdrant_client::{
     Qdrant,
 };
 use sea_orm::{
-    prelude::*, ActiveValue, ConnectOptions, Database, IntoActiveModel, QueryOrder, QuerySelect,
-    TransactionTrait,
+    prelude::*, ActiveValue, ConnectOptions, Database, QueryOrder, QuerySelect, TransactionTrait,
 };
 use teloxide::{net::Download, requests::Requester, types::Message, Bot};
 use tokio::time;
@@ -200,6 +199,8 @@ impl Storage {
     ) -> Result<Message> {
         let trans = self.dc.begin().await?;
 
+        self.bruteforce_available_slug(&trans, &mut meme).await?;
+
         meme.control_message_id = ActiveValue::set(-1);
         let meme = Memes::insert(meme)
             .exec_with_returning(&trans)
@@ -238,32 +239,32 @@ impl Storage {
             .await?)
     }
 
-    pub async fn update_slug(&self, meme_id: i32, updated_by: i64, slug: String) -> Result<()> {
-        let trans = self.dc.begin().await?;
+    async fn bruteforce_available_slug(
+        &self,
+        trans: &impl ConnectionTrait,
+        meme: &mut memes::ActiveModel,
+    ) -> Result<()> {
+        ensure!(meme.slug.is_set());
+        let new_slug = meme.slug.clone().unwrap();
 
-        let meme = Memes::find_by_id(meme_id)
-            .one(&trans)
+        if Memes::find()
+            .filter(memes::Column::Slug.eq(&new_slug))
+            .one(trans)
             .await?
-            .context("meme not found")?;
+            .is_some()
+        {
+            let mut i = 1u32;
+            while Memes::find()
+                .filter(memes::Column::Slug.eq(format!("{new_slug}-{i}")))
+                .one(trans)
+                .await?
+                .is_some()
+            {
+                i += 1;
+            }
+            meme.slug = ActiveValue::set(format!("{new_slug}-{i}"));
+        }
 
-        SlugRedirects::insert(slug_redirects::ActiveModel {
-            slug: ActiveValue::set(meme.slug.clone()),
-            meme_id: ActiveValue::set(meme_id),
-        })
-        .on_conflict(
-            OnConflict::column(slug_redirects::Column::Slug)
-                .update_column(slug_redirects::Column::MemeId)
-                .to_owned(),
-        )
-        .exec(&trans)
-        .await?;
-
-        let mut meme = meme.into_active_model();
-        meme.slug = ActiveValue::set(slug);
-
-        self.update_meme_internal(&trans, meme, updated_by).await?;
-
-        trans.commit().await?;
         Ok(())
     }
 
@@ -274,6 +275,30 @@ impl Storage {
         updated_by: i64,
     ) -> Result<()> {
         let meme_id = meme.id.clone().unwrap();
+
+        let old_meme = Memes::find_by_id(meme_id)
+            .one(trans)
+            .await?
+            .context("meme not found")?;
+
+        if meme.slug.is_set() {
+            let new_slug = meme.slug.clone().unwrap();
+            if old_meme.slug != new_slug {
+                self.bruteforce_available_slug(trans, &mut meme).await?;
+
+                SlugRedirects::insert(slug_redirects::ActiveModel {
+                    slug: ActiveValue::set(old_meme.slug.clone()),
+                    meme_id: ActiveValue::set(meme_id),
+                })
+                .on_conflict(
+                    OnConflict::column(slug_redirects::Column::Slug)
+                        .update_column(slug_redirects::Column::MemeId)
+                        .to_owned(),
+                )
+                .exec(trans)
+                .await?;
+            }
+        }
 
         meme.last_edited_by = ActiveValue::set(updated_by);
         meme.last_edition_time = ActiveValue::set(Utc::now().naive_utc());

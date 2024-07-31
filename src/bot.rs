@@ -229,7 +229,8 @@ async fn handle_message(
                 match action {
                     MemeEditAction::Slug => {
                         let text = msg.text().context("no text")?;
-                        db.update_slug(meme_id, updated_by, text.to_owned()).await?;
+                        meme.slug = ActiveValue::set(text.to_owned());
+                        db.update_meme(meme, updated_by).await?;
                     }
                     MemeEditAction::Title => {
                         let text = msg.text().context("no text")?;
