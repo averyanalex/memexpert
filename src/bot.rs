@@ -14,20 +14,19 @@ use sea_orm::{ActiveModelBehavior, ActiveValue};
 use teloxide::{
     prelude::*,
     types::{
-        FileMeta, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
+        ChatAction, FileMeta, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
         InlineQueryResultCachedGif, InlineQueryResultCachedPhoto, InlineQueryResultCachedVideo,
-        KeyboardButton, KeyboardMarkup, KeyboardRemove, ParseMode, PhotoSize,
+        KeyboardButton, KeyboardMarkup, KeyboardRemove, PhotoSize,
     },
 };
-use translit::ToLatin;
 
 use crate::{
     control::{MemeEditAction, MemeEditCallback},
+    openai::OpenAi,
     storage::Storage,
-    yandex::Yandex,
 };
 
-pub async fn run_bot(db: Storage, yandex: Arc<Yandex>, bot: Bot) -> Result<()> {
+pub async fn run_bot(db: Storage, openai: Arc<OpenAi>, bot: Bot) -> Result<()> {
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(handle_message))
         .branch(Update::filter_callback_query().endpoint(handle_callback_query))
@@ -40,7 +39,7 @@ pub async fn run_bot(db: Storage, yandex: Arc<Yandex>, bot: Bot) -> Result<()> {
     let states = StateStorage::default();
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .dependencies(dptree::deps![db.clone(), states, yandex])
+        .dependencies(dptree::deps![db.clone(), states, openai])
         .enable_ctrlc_handler()
         .build();
 
@@ -56,27 +55,11 @@ type StateStorage = Arc<Mutex<HashMap<UserId, State>>>;
 enum State {
     #[default]
     Start,
-    MemeCreation {
-        meme: memes::ActiveModel,
-        translation: translations::ActiveModel,
-        step: MemeCreationStep,
-    },
     MemeEdition {
         meme_id: i32,
         language: String,
         action: MemeEditAction,
     },
-}
-
-#[derive(Clone)]
-pub enum MemeCreationStep {
-    Language,
-    Title,
-    Slug,
-    Text,
-    Source,
-    Caption,
-    Description,
 }
 
 fn make_keyboard(buttons: &[&str]) -> KeyboardMarkup {
@@ -149,7 +132,7 @@ async fn handle_message(
     bot: Bot,
     msg: Message,
     db: Storage,
-    yandex: Arc<Yandex>,
+    openai: Arc<OpenAi>,
     states: StateStorage,
 ) -> Result<()> {
     let admin_chat_id: i64 = std::env::var("ADMIN_CHANNEL_ID")?.parse()?;
@@ -188,131 +171,43 @@ async fn handle_message(
                     if let Some(meme) = db.meme_by_tg_unique_id(&file.unique_id).await? {
                         bot.send_message(
                             msg.chat.id,
-                            format!("https://t.me/c/{admin_chat_id}/{}", meme.control_message_id),
+                            format!(
+                                "https://t.me/c/{}/{}",
+                                admin_chat_id / -100,
+                                meme.control_message_id
+                            ),
                         )
                         .await?;
                     } else {
+                        bot.send_chat_action(msg.chat.id, ChatAction::Typing)
+                            .await?;
+
                         meme.created_by = ActiveValue::set(msg.chat.id.0);
                         meme.last_edited_by = ActiveValue::set(msg.chat.id.0);
 
-                        let ocr_text = yandex
-                            .ocr(
+                        let ai_meta = openai
+                            .gen_meme_metadata(
                                 db.load_tg_file(&thumb.file.id, thumb.file.size.try_into()?)
                                     .await?,
                             )
                             .await?;
-                        bot.send_message(msg.chat.id, format!("Распознанный текст:\n{ocr_text}"))
-                            .await?;
+                        meme.text = ActiveValue::set(ai_meta.text);
+                        meme.slug = ActiveValue::set(ai_meta.slug);
 
-                        bot.send_message(msg.chat.id, "Теперь укажите язык для первого описания")
-                            .reply_markup(make_keyboard(&["ru", "en"]))
-                            .await?;
-                        states.lock().unwrap().insert(
-                            user,
-                            State::MemeCreation {
-                                meme,
-                                translation: translations::ActiveModel::new(),
-                                step: MemeCreationStep::Language,
-                            },
-                        );
-                    }
-                }
-            }
-            State::MemeCreation {
-                mut meme,
-                mut translation,
-                step,
-            } => {
-                let text = msg.text().context("no text")?;
-
-                if let Some(next_step) = match step {
-                    MemeCreationStep::Language => {
-                        translation.language = ActiveValue::set(text.to_owned());
-
-                        bot.send_message(msg.chat.id, "Придумайте название")
-                            .reply_markup(KeyboardRemove::new())
-                            .await?;
-                        Some(MemeCreationStep::Title)
-                    }
-                    MemeCreationStep::Title => {
-                        translation.title = ActiveValue::set(text.to_owned());
-
-                        let suggested_slug: String =
-                            translit::Gost779B::new(translit::Language::Ru)
-                                .to_latin(&text.to_lowercase().replace(' ', "-"))
-                                .chars()
-                                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-                                .collect();
-
-                        bot.send_message(
-                            msg.chat.id,
-                            format!("Теперь придумайте слаг, например `{suggested_slug}`"),
-                        )
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(make_keyboard(&[&suggested_slug]))
-                        .await?;
-
-                        Some(MemeCreationStep::Slug)
-                    }
-                    MemeCreationStep::Slug => {
-                        meme.slug = ActiveValue::set(text.to_owned());
-
-                        bot.send_message(msg.chat.id, "Отправьте текст на меме")
-                            .reply_markup(make_keyboard(&["Нет текста"]))
-                            .await?;
-                        Some(MemeCreationStep::Text)
-                    }
-                    MemeCreationStep::Text => {
-                        if text != "Нет текста" {
-                            meme.text = ActiveValue::set(Some(text.to_owned()));
-                        };
-
-                        bot.send_message(msg.chat.id, "Укажите url источника мема")
-                            .reply_markup(make_keyboard(&["Неизвестен"]))
-                            .await?;
-                        Some(MemeCreationStep::Source)
-                    }
-                    MemeCreationStep::Source => {
-                        if text != "Неизвестен" {
-                            meme.source = ActiveValue::set(Some(text.to_owned()));
-                        };
-
-                        bot.send_message(msg.chat.id, "Придумайте подпись (короткое описание)")
-                            .reply_markup(KeyboardRemove::new())
-                            .await?;
-                        Some(MemeCreationStep::Caption)
-                    }
-                    MemeCreationStep::Caption => {
-                        translation.caption = ActiveValue::set(text.to_owned());
-
-                        bot.send_message(msg.chat.id, "Придумайте описание")
-                            .reply_markup(KeyboardRemove::new())
-                            .await?;
-                        Some(MemeCreationStep::Description)
-                    }
-                    MemeCreationStep::Description => {
-                        translation.description = ActiveValue::set(text.to_owned());
+                        let mut translation = translations::ActiveModel::new();
+                        translation.language = ActiveValue::set("ru".to_owned());
+                        translation.title = ActiveValue::set(ai_meta.title_ru);
+                        translation.caption = ActiveValue::set(ai_meta.subtitle_ru);
+                        translation.description = ActiveValue::set(ai_meta.description_ru);
 
                         let control_msg = db.create_meme(meme.clone(), translation.clone()).await?;
-
                         let control_msg_url = control_msg.url().context("can't create url")?;
+
                         bot.send_message(msg.chat.id, format!("Мем создан!\n{control_msg_url}"))
                             .reply_markup(KeyboardRemove::new())
                             .await?;
-                        None
                     }
-                } {
-                    states.lock().unwrap().insert(
-                        user,
-                        State::MemeCreation {
-                            meme,
-                            translation,
-                            step: next_step,
-                        },
-                    );
-                } else {
-                    states.lock().unwrap().remove(&user);
-                };
+                }
             }
             State::MemeEdition {
                 meme_id,

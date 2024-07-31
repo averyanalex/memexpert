@@ -14,6 +14,8 @@ use teloxide::{
     },
 };
 
+use crate::add_dot_if_needed;
+
 #[derive(Clone)]
 pub enum MemeEditAction {
     Slug,
@@ -93,19 +95,18 @@ impl FromStr for MemeEditCallback {
 
 fn gen_meme_control_text(meme: &memes::Model, translations: &[translations::Model]) -> String {
     let mut t = format!(
-        "Слаг: {}.\nТекст: {}.\nИсточник: {}.",
+        "Слаг: {}.\nИсточник: {}.",
         meme.slug,
-        meme.text.as_ref().map_or("отсутствует", |t| t.as_str()),
         meme.source.as_ref().map_or("неизвестен", |t| t.as_str())
     );
 
     for translation in translations {
         write!(
             t,
-            "\n\n[{}] {}.\nПодпись: {}.\nОписание: {}.",
+            "\n\n[{}] {}\nПодпись: {}\nОписание: {}",
             translation.language.to_uppercase(),
-            translation.title,
-            translation.caption,
+            add_dot_if_needed(&translation.title),
+            add_dot_if_needed(&translation.caption),
             translation.description
         )
         .unwrap();
@@ -113,10 +114,21 @@ fn gen_meme_control_text(meme: &memes::Model, translations: &[translations::Mode
 
     write!(
         t,
+        "\n\nТекст: {}",
+        meme.text.as_ref().map_or("отсутствует.", |t| t.as_str()),
+    )
+    .unwrap();
+
+    write!(
+        t,
         "\n\nСоздан {} в {}, изменён {} в {}",
         meme.created_by, meme.creation_time, meme.last_edited_by, meme.last_edition_time,
     )
     .unwrap();
+
+    if t.len() > 1024 {
+        t = t.chars().take(1024).collect();
+    }
 
     t
 }

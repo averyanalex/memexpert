@@ -8,14 +8,20 @@ use storage::Storage;
 use tracing::*;
 use tracing_subscriber::prelude::*;
 
-mod aibox;
 mod bot;
 mod control;
-mod ms_models;
 mod openai;
 mod storage;
 mod web;
-mod yandex;
+
+pub fn add_dot_if_needed(text: &str) -> String {
+    let last_char = text.chars().last().unwrap_or('.');
+    if last_char == '.' || last_char == '!' || last_char == '?' {
+        text.to_owned()
+    } else {
+        format!("{text}.")
+    }
+}
 
 fn main() -> Result<()> {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -68,13 +74,11 @@ fn main() -> Result<()> {
 
 async fn _main() -> Result<()> {
     let bot = teloxide::Bot::from_env();
-    let yandex = Arc::new(yandex::Yandex::new()?);
     let openai = Arc::new(openai::OpenAi::new());
-    let aibox = Arc::new(aibox::AiBox::new());
-    let storage = Storage::new(bot.clone(), openai, aibox).await?;
+    let storage = Storage::new(bot.clone(), openai.clone()).await?;
 
     let (bot_res, web_res) = tokio::join!(
-        bot::run_bot(storage.clone(), yandex, bot),
+        bot::run_bot(storage.clone(), openai, bot),
         web::run_webserver(storage)
     );
     bot_res?;

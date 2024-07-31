@@ -1,5 +1,5 @@
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::{collections::HashMap, fmt::Write};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -8,7 +8,6 @@ use entities::{
     translations, web_visits,
 };
 use itertools::Itertools;
-use meilisearch_sdk::client::Client;
 use migration::{Migrator, MigratorTrait, OnConflict};
 use qdrant_client::qdrant::{Fusion, PrefetchQueryBuilder, Query, QueryPointsBuilder};
 use qdrant_client::{
@@ -27,25 +26,19 @@ use teloxide::{net::Download, requests::Requester, types::Message, Bot};
 use tokio::time;
 use tracing::log::LevelFilter;
 
-use crate::{
-    aibox::AiBox,
-    control::refresh_meme_control_msg,
-    ms_models::{MsMeme, MsMemeTranslation},
-    openai::OpenAi,
-};
+use crate::add_dot_if_needed;
+use crate::{control::refresh_meme_control_msg, openai::OpenAi};
 
 #[derive(Clone)]
 pub struct Storage {
     dc: DatabaseConnection,
-    ms: Client,
     qd: Arc<Qdrant>,
     bot: Bot,
     openai: Arc<OpenAi>,
-    aibox: Arc<AiBox>,
 }
 
 impl Storage {
-    pub async fn new(bot: Bot, openai: Arc<OpenAi>, aibox: Arc<AiBox>) -> Result<Self> {
+    pub async fn new(bot: Bot, openai: Arc<OpenAi>) -> Result<Self> {
         let db_url = std::env::var("DATABASE_URL")?;
 
         let mut conn_options = ConnectOptions::new(db_url);
@@ -55,16 +48,13 @@ impl Storage {
         let dc = Database::connect(conn_options).await?;
         Migrator::up(&dc, None).await?;
 
-        let ms = Client::new("http://127.0.0.1:7700", None::<String>)?;
         let qd = Arc::new(Qdrant::from_url("http://127.0.0.1:6334").build()?);
 
         let storage = Self {
             dc,
-            ms,
             qd,
             bot,
             openai,
-            aibox,
         };
         storage.create_indexes().await?;
 
@@ -78,8 +68,6 @@ impl Storage {
                 "text-dense",
                 VectorParamsBuilder::new(1536, Distance::Cosine),
             );
-            vectors_config
-                .add_named_vector_params("clip", VectorParamsBuilder::new(1152, Distance::Cosine));
 
             self.qd
                 .create_collection(
@@ -88,24 +76,12 @@ impl Storage {
                 .await?;
         }
 
-        if !self
-            .ms
-            .list_all_indexes()
-            .await?
-            .results
-            .into_iter()
-            .any(|i| i.uid == "memexpert")
-        {
-            self.ms.create_index("memexpert", Some("id")).await?;
-        }
-
         Ok(())
     }
 
     pub async fn reindex_all(&self) -> Result<()> {
         self.create_indexes().await?;
         self.qd.delete_collection("memexpert").await?;
-        self.ms.delete_index("memexpert").await?;
         self.create_indexes().await?;
 
         for (meme, translations) in Memes::find()
@@ -113,45 +89,9 @@ impl Storage {
             .all(&self.dc)
             .await?
         {
-            self.create_or_replace_meme_in_ms(&meme, &translations)
-                .await?;
             time::sleep(time::Duration::from_millis(100)).await;
             self.create_or_replace_meme_in_qd(&meme, &translations)
                 .await?;
-        }
-
-        Ok(())
-    }
-
-    async fn create_or_replace_meme_in_ms(
-        &self,
-        meme: &memes::Model,
-        translations: &[translations::Model],
-    ) -> Result<()> {
-        if meme.publish_status == PublishStatus::Published {
-            let meme = MsMeme {
-                id: meme.id,
-                text: meme.text.clone(),
-                translations: translations
-                    .iter()
-                    .map(|t| {
-                        (
-                            t.language.clone(),
-                            MsMemeTranslation {
-                                title: t.title.clone(),
-                                caption: t.caption.clone(),
-                                description: t.description.clone(),
-                            },
-                        )
-                    })
-                    .collect(),
-            };
-            self.ms
-                .index("memexpert")
-                .add_or_replace(&[meme], Some("id"))
-                .await?;
-        } else {
-            self.ms.index("memexpert").delete_document(meme.id).await?;
         }
 
         Ok(())
@@ -163,10 +103,7 @@ impl Storage {
         translations: &[translations::Model],
     ) -> Result<()> {
         if meme.publish_status == PublishStatus::Published {
-            let (text_embedding, clip_embedding) = tokio::join!(
-                self.get_text_embedding(meme, translations),
-                self.get_clip_image_embedding(meme)
-            );
+            let text_embedding = self.get_text_embedding(meme, translations).await?;
 
             self.qd
                 .upsert_points(
@@ -174,12 +111,9 @@ impl Storage {
                         "memexpert",
                         vec![PointStruct::new(
                             u64::try_from(meme.id)?,
-                            [
-                                ("text-dense".to_owned(), text_embedding?),
-                                ("clip".to_owned(), clip_embedding?),
-                            ]
-                            .into_iter()
-                            .collect::<HashMap<_, _>>(),
+                            [("text-dense".to_owned(), text_embedding)]
+                                .into_iter()
+                                .collect::<HashMap<_, _>>(),
                             Payload::new(),
                         )],
                     )
@@ -206,38 +140,21 @@ impl Storage {
         meme: &memes::Model,
         translations: &[translations::Model],
     ) -> Result<Vec<f32>> {
-        fn add_dot_if_needed(text: &str) -> String {
-            let last_char = text.chars().last().unwrap_or('.');
-            if last_char == '.' || last_char == '!' || last_char == '?' {
-                text.to_owned()
-            } else {
-                format!("{text}.")
-            }
-        }
+        let translation = translations.first().context("no translations")?;
 
-        let mut text = meme.text.clone().unwrap_or_default();
+        let mut text = format!(
+            "Мем \"{}\".\n{}\n\n{}",
+            translation.title,
+            add_dot_if_needed(&translation.caption),
+            translation.description
+        );
 
-        for translation in translations {
-            if !text.is_empty() {
-                write!(text, "\n\n")?;
-            }
-            write!(
-                text,
-                "{}\n{}",
-                add_dot_if_needed(&translation.title),
-                add_dot_if_needed(&translation.caption),
-            )?;
+        if let Some(text_on_meme) = &meme.text {
+            text += "\n\nТекст: ";
+            text += text_on_meme;
         }
 
         self.openai.embedding(text).await
-    }
-
-    async fn get_clip_image_embedding(&self, meme: &memes::Model) -> Result<Vec<f32>> {
-        let thumb = self
-            .load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
-            .await?;
-
-        self.aibox.clip_image(thumb).await
     }
 
     async fn process_meme_update(
@@ -265,9 +182,6 @@ impl Storage {
             .save(trans)
             .await?;
         }
-
-        self.create_or_replace_meme_in_ms(&meme, &translations)
-            .await?;
         self.create_or_replace_meme_in_qd(&meme, &translations)
             .await?;
 
@@ -432,11 +346,7 @@ impl Storage {
                 .map(|i| (i, 'r'))
                 .collect_vec()
         } else {
-            let (text_embedding, clip_embedding): (Result<_>, Result<_>) =
-                tokio::join!(self.openai.embedding(query), async {
-                    let translated_query = self.aibox.translation(query).await?;
-                    self.aibox.clip_text(&translated_query).await
-                });
+            let text_embedding = self.openai.embedding(query).await?;
 
             let qd_results = self
                 .qd
@@ -444,15 +354,9 @@ impl Storage {
                     QueryPointsBuilder::new("memexpert")
                         .add_prefetch(
                             PrefetchQueryBuilder::default()
-                                .query(Query::new_nearest(text_embedding?))
+                                .query(Query::new_nearest(text_embedding))
                                 .using("text-dense")
-                                .limit(200u32),
-                        )
-                        .add_prefetch(
-                            PrefetchQueryBuilder::default()
-                                .query(Query::new_nearest(clip_embedding?))
-                                .using("clip")
-                                .limit(200u32),
+                                .limit(100u32),
                         )
                         .query(Query::new_fusion(Fusion::Rrf))
                         .limit(100),
