@@ -435,6 +435,7 @@ impl Storage {
         &self,
     ) -> Result<Vec<(memes::Model, Vec<translations::Model>)>> {
         let memes = Memes::find()
+            .order_by_asc(memes::Column::Id)
             .find_with_related(Translations)
             .all(&self.dc)
             .await?;

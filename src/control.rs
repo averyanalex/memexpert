@@ -94,8 +94,9 @@ impl FromStr for MemeEditCallback {
 }
 
 fn gen_meme_control_text(meme: &memes::Model, translations: &[translations::Model]) -> String {
+    let lang = &translations[0].language;
     let mut t = format!(
-        "Слаг: {}.\nИсточник: {}.",
+        "URL: https://memexpert.xyz/{lang}/{}.\nИсточник: {}.",
         meme.slug,
         meme.source.as_ref().map_or("неизвестен", |t| t.as_str())
     );

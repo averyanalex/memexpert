@@ -10,7 +10,7 @@ use entities::{
     translations,
 };
 use itertools::Itertools;
-use sea_orm::{ActiveModelBehavior, ActiveValue};
+use sea_orm::{ActiveModelBehavior, ActiveValue, IntoActiveModel};
 use teloxide::{
     prelude::*,
     types::{
@@ -19,6 +19,7 @@ use teloxide::{
         KeyboardButton, KeyboardMarkup, KeyboardRemove, PhotoSize,
     },
 };
+use tokio::time;
 
 use crate::{
     control::{MemeEditAction, MemeEditCallback},
@@ -160,6 +161,50 @@ async fn handle_message(
                 db.reindex_all().await?;
                 bot.send_message(msg.chat.id, "Reindex completed").await?;
                 return Ok(());
+            } else if text.starts_with("/regen") {
+                if let [_, start, stop] = text.split_whitespace().collect::<Vec<_>>()[..] {
+                    let updated_by = user.0.try_into()?;
+                    let start: i32 = start.parse()?;
+                    let stop: i32 = stop.parse()?;
+                    let mut interval = time::interval(time::Duration::from_secs(20));
+
+                    for (meme, translations) in db.all_memes_with_translations().await? {
+                        if (start..stop).contains(&meme.id) {
+                            interval.tick().await;
+
+                            let ai_meta = openai
+                                .gen_meme_metadata(
+                                    db.load_tg_file(
+                                        &meme.thumb_tg_id,
+                                        meme.thumb_content_length.try_into()?,
+                                    )
+                                    .await?,
+                                )
+                                .await?;
+                            let mut meme = meme.into_active_model();
+                            meme.text = ActiveValue::set(ai_meta.fixed_text);
+                            meme.slug = ActiveValue::set(ai_meta.slug);
+
+                            for translation in translations {
+                                if translation.language == "ru" {
+                                    let mut translation = translation.into_active_model();
+                                    translation.title = ActiveValue::set(ai_meta.title_ru.clone());
+                                    translation.caption =
+                                        ActiveValue::set(ai_meta.subtitle_ru.clone());
+                                    translation.description =
+                                        ActiveValue::set(ai_meta.description_ru.clone());
+
+                                    db.update_meme_translation(translation, updated_by).await?;
+                                }
+                            }
+
+                            db.update_meme(meme, updated_by).await?;
+                        }
+                    }
+
+                    bot.send_message(msg.chat.id, "Regen completed").await?;
+                    return Ok(());
+                }
             }
         }
 
@@ -173,7 +218,7 @@ async fn handle_message(
                             msg.chat.id,
                             format!(
                                 "https://t.me/c/{}/{}",
-                                admin_chat_id / -100,
+                                -admin_chat_id % 100,
                                 meme.control_message_id
                             ),
                         )
@@ -191,7 +236,7 @@ async fn handle_message(
                                     .await?,
                             )
                             .await?;
-                        meme.text = ActiveValue::set(ai_meta.text);
+                        meme.text = ActiveValue::set(ai_meta.fixed_text);
                         meme.slug = ActiveValue::set(ai_meta.slug);
 
                         let mut translation = translations::ActiveModel::new();

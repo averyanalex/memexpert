@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
@@ -20,7 +20,7 @@ pub struct AiMetadata {
     pub slug: String,
     pub subtitle_ru: String,
     pub description_ru: String,
-    pub text: Option<String>,
+    pub fixed_text: Option<String>,
 }
 
 pub struct OpenAi {
@@ -73,9 +73,9 @@ impl OpenAi {
                     "type": "string",
                     "description": "Very long and detailed description of the meme in Russian language."
                 },
-                "text": {
+                "fixed_text": {
                     "type": "string",
-                    "description": "Text written on the picture with corrected case"
+                    "description": "The text in the picture, divided into sentences and with corrected registers."
                 }
                 },
                 "required": [
@@ -103,8 +103,9 @@ impl OpenAi {
                     The slug must be a translation of the title into English and consist only of Latin letters and hyphens. \
                     The subtitle should be a small capitalized sentence without a period that complements the title. \
                     The description should be long and detailed, describing what is shown in the picture and explaining what the meme is about. \
-                    The text, if present in the picture, must be with corrected case (for example, corrected capslock, sentences starting with a capital letter), but with preserved spelling. \
-                    The title, subtitle and descriptions must be written in Russian.")
+                    If the text in the picture is present, you need to correct the capslock (and capitalize the first letter) and divide it into sentences. Add the end of the sentence if there is none. \
+                    The title, subtitle and descriptions must be written in Russian.\
+                    Use double quotes (\") as quotation marks.")
                     .build()?
                     .into(),
                 ChatCompletionRequestUserMessageArgs::default()
@@ -126,17 +127,26 @@ impl OpenAi {
             ])
             .build()?;
 
-        let response = self.client.chat().create(request).await?;
-        let chat_choice = response.choices.into_iter().next().context("no choices")?;
-        let tool_use = chat_choice
-            .message
-            .tool_calls
-            .context("no tool calls")?
-            .into_iter()
-            .next()
-            .context("no tool calls")?;
-        let metadata: AiMetadata = from_str(&tool_use.function.arguments)?;
+        let try_get_meta = async || {
+            let response = self.client.chat().create(request.clone()).await?;
+            let chat_choice = response.choices.into_iter().next().context("no choices")?;
+            let tool_use = chat_choice
+                .message
+                .tool_calls
+                .context("no tool calls")?
+                .into_iter()
+                .next()
+                .context("no tool calls")?;
+            let metadata: AiMetadata = from_str(&tool_use.function.arguments)?;
+            Ok::<_, anyhow::Error>(metadata)
+        };
 
-        Ok(metadata)
+        for _ in 0..3 {
+            if let Ok(metadata) = try_get_meta().await {
+                return Ok(metadata);
+            }
+        }
+
+        bail!("all attempts failed");
     }
 }

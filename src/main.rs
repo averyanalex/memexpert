@@ -1,4 +1,5 @@
 #![feature(let_chains)]
+#![feature(async_closure)]
 
 use std::str::FromStr;
 use std::sync::Arc;
