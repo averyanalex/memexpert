@@ -431,6 +431,21 @@ impl Storage {
         Ok(memes)
     }
 
+    pub async fn get_slug_redirect(&self, slug: &str) -> Result<Option<String>> {
+        if let Some(meme_id) = SlugRedirects::find_by_id(slug)
+            .one(&self.dc)
+            .await?
+            .map(|r| r.meme_id)
+        {
+            Ok(Memes::find_by_id(meme_id)
+                .one(&self.dc)
+                .await?
+                .map(|m| m.slug))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn all_memes_with_translations(
         &self,
     ) -> Result<Vec<(memes::Model, Vec<translations::Model>)>> {

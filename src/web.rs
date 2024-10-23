@@ -7,7 +7,7 @@ use axum::{
     body::Body,
     extract::{Path, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
@@ -257,6 +257,8 @@ async fn meme(
             },
         )
             .into_response())
+    } else if let Some(meme_id) = state.db.get_slug_redirect(&slug).await? {
+        Ok((Redirect::permanent(&format!("/{language}/{meme_id}"))).into_response())
     } else {
         Ok((StatusCode::NOT_FOUND, "meme not found").into_response())
     }
