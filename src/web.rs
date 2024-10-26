@@ -130,36 +130,44 @@ async fn file(
     Path(filename): Path<String>,
     range: Option<TypedHeader<Range>>,
 ) -> Result<Response, AppError> {
-    let splitten = filename.split('.').collect_vec();
+    let splitten: Vec<_> = filename.split('.').collect();
     let slug = splitten[0];
 
-    let Some((meme, _)) = state.db.meme_with_translations_by_slug(slug).await? else {
-        return Ok((StatusCode::NOT_FOUND, "meme not found").into_response());
-    };
+    Ok(
+        if let Some((meme, _)) = state.db.meme_with_translations_by_slug(slug).await? {
+            let (tg_id, content_length) = if splitten.len() == 3 {
+                (meme.thumb_tg_id, meme.thumb_content_length)
+            } else {
+                (meme.tg_id, meme.content_length)
+            };
 
-    let (tg_id, content_length) = if splitten.len() == 3 {
-        (meme.thumb_tg_id, meme.thumb_content_length)
-    } else {
-        (meme.tg_id, meme.content_length)
-    };
+            let file = state
+                .db
+                .load_tg_file(&tg_id, content_length.try_into()?)
+                .await?;
+            let body = KnownSize::seek(Cursor::new(file)).await?;
+            let range = range.map(|TypedHeader(range)| range);
 
-    let file = state
-        .db
-        .load_tg_file(&tg_id, content_length.try_into()?)
-        .await?;
-    let body = KnownSize::seek(Cursor::new(file)).await?;
-    let range = range.map(|TypedHeader(range)| range);
-
-    let headers = [
-        (header::CACHE_CONTROL, "max-age=604800"),
-        (header::CONTENT_TYPE, &meme.mime_type),
-        (
-            header::CONTENT_DISPOSITION,
-            &format!("filename=\"{filename}\""),
-        ),
-    ];
-
-    Ok((headers, Ranged::new(range, body)).into_response())
+            let headers = [
+                (header::CACHE_CONTROL, "max-age=604800"),
+                (header::CONTENT_TYPE, &meme.mime_type),
+                (
+                    header::CONTENT_DISPOSITION,
+                    &format!("filename=\"{filename}\""),
+                ),
+            ];
+            (headers, Ranged::new(range, body)).into_response()
+        } else if let Some(new_slug) = state.db.get_slug_redirect(slug).await? {
+            let new_filename: String = [new_slug.as_str()]
+                .into_iter()
+                .chain(splitten.into_iter().skip(1))
+                .intersperse(".")
+                .collect();
+            Redirect::permanent(&new_filename).into_response()
+        } else {
+            (StatusCode::NOT_FOUND, "meme not found").into_response()
+        },
+    )
 }
 
 fn get_header(headers: &HeaderMap, name: HeaderName) -> Option<String> {
@@ -178,94 +186,96 @@ async fn meme(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Response, AppError> {
-    if let Some((meme, translations)) = state.db.meme_with_translations_by_slug(&slug).await?
-        && let Some(translation) = translations.into_iter().find(|tr| tr.language == language)
-    {
-        let mime_type: mime::Mime = meme.mime_type.parse()?;
-        let locale = match language.as_str() {
-            "en" => "en_US",
-            "ru" => "ru_RU",
-            _ => return Err(anyhow!("unknown language").into()),
-        }
-        .to_owned();
-        let extension = match mime_type.subtype() {
-            mime::JPEG => "jpg",
-            mime::MP4 => "mp4",
-            _ => return Err(anyhow!("unknown mime").into()),
-        }
-        .to_owned();
-
-        let uid = if let Some(uid) = jar.get("uid")
-            && uid.value().len() == 8
-            && uid.value().chars().all(|c| c.is_alphanumeric())
+    Ok(
+        if let Some((meme, translations)) = state.db.meme_with_translations_by_slug(&slug).await?
+            && let Some(translation) = translations.into_iter().find(|tr| tr.language == language)
         {
-            uid.value().to_owned()
+            let mime_type: mime::Mime = meme.mime_type.parse()?;
+            let locale = match language.as_str() {
+                "en" => "en_US",
+                "ru" => "ru_RU",
+                _ => return Err(anyhow!("unknown language").into()),
+            }
+            .to_owned();
+            let extension = match mime_type.subtype() {
+                mime::JPEG => "jpg",
+                mime::MP4 => "mp4",
+                _ => return Err(anyhow!("unknown mime").into()),
+            }
+            .to_owned();
+
+            let uid = if let Some(uid) = jar.get("uid")
+                && uid.value().len() == 8
+                && uid.value().chars().all(|c| c.is_alphanumeric())
+            {
+                uid.value().to_owned()
+            } else {
+                rand::thread_rng()
+                    .sample_iter(&Alphanumeric)
+                    .take(8)
+                    .map(char::from)
+                    .collect()
+            };
+            let mut uid_cookie = Cookie::new("uid", uid.clone());
+            uid_cookie.make_permanent();
+            uid_cookie.set_same_site(SameSite::Strict);
+            uid_cookie.set_secure(true);
+
+            let visit = web_visits::ActiveModel {
+                user_id: ActiveValue::set(uid),
+                meme_id: ActiveValue::set(meme.id),
+                language: ActiveValue::set(language.clone()),
+                ip: ActiveValue::set(
+                    get_header(&headers, HeaderName::from_static("x-real-ip"))
+                        .unwrap_or_else(|| "127.0.0.1".to_owned()),
+                ),
+                user_agent: ActiveValue::set(get_header(&headers, header::USER_AGENT)),
+                referer: ActiveValue::set(get_header(&headers, header::REFERER)),
+
+                ..Default::default()
+            };
+            state.db.create_web_visit(visit).await?;
+
+            let headers = [(header::CONTENT_LANGUAGE, translation.language)];
+
+            (
+                headers,
+                jar.add(uid_cookie),
+                MemeTemplate {
+                    id: meme.id,
+                    language,
+                    locale,
+                    filename: format!("{slug}.{extension}"),
+                    thumb_filename: format!("{slug}.thumb.jpg"),
+                    slug,
+                    title: translation.title,
+                    text: meme.text,
+                    caption: translation.caption,
+                    description: translation.description,
+                    mime_type: mime_type.to_string(),
+                    thumb_mime_type: meme.thumb_mime_type,
+                    is_mime_video: mime_type.type_() == mime::VIDEO,
+                    is_animation: meme.media_type == MediaType::Animation,
+                    duration: chrono::Duration::seconds(meme.duration.into()).to_string(),
+                    duration_secs: meme.duration,
+                    width: meme.width.try_into()?,
+                    height: meme.height.try_into()?,
+                    thumb_width: meme.thumb_width.try_into()?,
+                    thumb_height: meme.thumb_height.try_into()?,
+                    created_date: meme
+                        .creation_time
+                        .and_utc()
+                        .to_rfc3339_opts(SecondsFormat::Secs, false),
+                    source: meme.source,
+                },
+            )
+                .into_response()
+        } else if let Some(new_slug) = state.db.get_slug_redirect(&slug).await? {
+            Redirect::permanent(&new_slug).into_response()
         } else {
-            rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(8)
-                .map(char::from)
-                .collect()
-        };
-        let mut uid_cookie = Cookie::new("uid", uid.clone());
-        uid_cookie.make_permanent();
-        uid_cookie.set_same_site(SameSite::Strict);
-        uid_cookie.set_secure(true);
-
-        let visit = web_visits::ActiveModel {
-            user_id: ActiveValue::set(uid),
-            meme_id: ActiveValue::set(meme.id),
-            language: ActiveValue::set(language.clone()),
-            ip: ActiveValue::set(
-                get_header(&headers, HeaderName::from_static("x-real-ip"))
-                    .unwrap_or_else(|| "127.0.0.1".to_owned()),
-            ),
-            user_agent: ActiveValue::set(get_header(&headers, header::USER_AGENT)),
-            referer: ActiveValue::set(get_header(&headers, header::REFERER)),
-
-            ..Default::default()
-        };
-        state.db.create_web_visit(visit).await?;
-
-        let headers = [(header::CONTENT_LANGUAGE, translation.language)];
-
-        Ok((
-            headers,
-            jar.add(uid_cookie),
-            MemeTemplate {
-                id: meme.id,
-                language,
-                locale,
-                filename: format!("{slug}.{extension}"),
-                thumb_filename: format!("{slug}.thumb.jpg"),
-                slug,
-                title: translation.title,
-                text: meme.text,
-                caption: translation.caption,
-                description: translation.description,
-                mime_type: mime_type.to_string(),
-                thumb_mime_type: meme.thumb_mime_type,
-                is_mime_video: mime_type.type_() == mime::VIDEO,
-                is_animation: meme.media_type == MediaType::Animation,
-                duration: chrono::Duration::seconds(meme.duration.into()).to_string(),
-                duration_secs: meme.duration,
-                width: meme.width.try_into()?,
-                height: meme.height.try_into()?,
-                thumb_width: meme.thumb_width.try_into()?,
-                thumb_height: meme.thumb_height.try_into()?,
-                created_date: meme
-                    .creation_time
-                    .and_utc()
-                    .to_rfc3339_opts(SecondsFormat::Secs, false),
-                source: meme.source,
-            },
-        )
-            .into_response())
-    } else if let Some(meme_id) = state.db.get_slug_redirect(&slug).await? {
-        Ok((Redirect::permanent(&format!("/{language}/{meme_id}"))).into_response())
-    } else {
-        Ok((StatusCode::NOT_FOUND, "meme not found").into_response())
-    }
+            (StatusCode::NOT_FOUND, "meme not found").into_response()
+        },
+    )
 }
 
 async fn index() -> Result<Response, AppError> {
