@@ -20,6 +20,7 @@ use teloxide::{
     },
 };
 use tokio::time;
+use tracing::*;
 
 use crate::{
     control::{MemeEditAction, MemeEditCallback},
@@ -43,6 +44,9 @@ pub async fn run_bot(db: Storage, openai: Arc<OpenAi>, bot: Bot) -> Result<()> {
         .dependencies(dptree::deps![db.clone(), states, openai])
         .enable_ctrlc_handler()
         .build();
+
+    let me = bot.get_me().await?;
+    info!("running bot as @{}", me.username());
 
     dispatcher.dispatch().await;
 

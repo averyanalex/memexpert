@@ -1,5 +1,6 @@
-use std::fmt::Write;
 use std::io::Cursor;
+use std::str::FromStr;
+use std::{fmt::Write, net::SocketAddr};
 
 use anyhow::{anyhow, Result};
 use askama::Template;
@@ -23,9 +24,10 @@ use axum_range::{KnownSize, Ranged};
 use chrono::SecondsFormat;
 use entities::{sea_orm_active_enums::MediaType, web_visits};
 use include_dir::{include_dir, Dir};
-use itertools::Itertools;
 use rand::{distributions::Alphanumeric, Rng};
 use sea_orm::ActiveValue;
+use tokio::net::TcpListener;
+use tracing::*;
 
 use crate::storage::Storage;
 
@@ -41,7 +43,9 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
         .route("/sitemap.txt", get(sitemap_txt))
         .with_state(AppState { db });
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let addr = SocketAddr::from_str("0.0.0.0:3000")?;
+    let listener = TcpListener::bind(addr).await?;
+    info!("listening at {addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
