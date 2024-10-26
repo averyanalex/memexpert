@@ -1,10 +1,10 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessageContentPart,
-        ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionRequestUserMessageContent, ChatCompletionTool,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
+        ChatCompletionRequestUserMessageContentPart, ChatCompletionTool,
         ChatCompletionToolChoiceOption, ChatCompletionToolType, CreateChatCompletionRequestArgs,
         CreateEmbeddingRequestArgs, EmbeddingInput, FunctionObject, ImageDetail, ImageUrl,
     },
@@ -57,34 +57,37 @@ impl OpenAi {
             parameters: Some(json!({
                 "type": "object",
                 "properties": {
-                "title_ru": {
-                    "type": "string",
-                    "description": "Laconic and short title in Russian language."
-                },
-                "slug": {
-                    "type": "string",
-                    "description": "Slug. Part of meme's url address."
-                },
-                "subtitle_ru": {
-                    "type": "string",
-                    "description": "Subtitle in Russian language."
-                },
-                "description_ru": {
-                    "type": "string",
-                    "description": "Very long and detailed description of the meme in Russian language."
-                },
-                "fixed_text": {
-                    "type": "string",
-                    "description": "The text in the picture, divided into sentences and with corrected registers."
-                }
+                    "title_ru": {
+                        "type": "string",
+                        "description": "Laconic and short title in Russian language."
+                    },
+                    "slug": {
+                        "type": "string",
+                        "description": "Slug. Part of meme's url address."
+                    },
+                    "subtitle_ru": {
+                        "type": "string",
+                        "description": "Subtitle in Russian language."
+                    },
+                    "description_ru": {
+                        "type": "string",
+                        "description": "Very long and detailed description of the meme in Russian language."
+                    },
+                    "fixed_text": {
+                        "type": "string",
+                        "description": "The text in the picture, divided into sentences and with corrected registers."
+                    }
                 },
                 "required": [
                     "title_ru",
                     "slug",
                     "subtitle_ru",
                     "description_ru"
-                ]
+                ],
+                "additionalProperties": false,
             })),
+
+            strict: Some(false),
         };
         let save_tool = ChatCompletionTool {
             r#type: ChatCompletionToolType::Function,
@@ -110,7 +113,7 @@ impl OpenAi {
                     .into(),
                 ChatCompletionRequestUserMessageArgs::default()
                     .content(ChatCompletionRequestUserMessageContent::Array(vec![
-                        ChatCompletionRequestMessageContentPart::ImageUrl(
+                        ChatCompletionRequestUserMessageContentPart::ImageUrl(
                             ChatCompletionRequestMessageContentPartImage {
                                 image_url: ImageUrl {
                                     url: format!(
@@ -141,12 +144,16 @@ impl OpenAi {
             Ok::<_, anyhow::Error>(metadata)
         };
 
+        let mut last_error = None;
         for _ in 0..3 {
-            if let Ok(metadata) = try_get_meta().await {
+            let res = try_get_meta().await;
+            if let Ok(metadata) = res {
                 return Ok(metadata);
+            } else if let Err(err) = res {
+                last_error = Some(err);
             }
         }
 
-        bail!("all attempts failed");
+        Err(last_error.unwrap())
     }
 }

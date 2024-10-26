@@ -141,7 +141,7 @@ async fn handle_message(
     states: StateStorage,
 ) -> Result<()> {
     let admin_chat_id: i64 = std::env::var("ADMIN_CHANNEL_ID")?.parse()?;
-    let user = msg.from().context("no from")?.id;
+    let user = msg.from.clone().context("no from")?.id;
     let state = states
         .lock()
         .unwrap()
@@ -150,7 +150,7 @@ async fn handle_message(
         .unwrap_or_default();
 
     if bot
-        .get_chat_member(ChatId(admin_chat_id), msg.from().context("no from")?.id)
+        .get_chat_member(ChatId(admin_chat_id), user)
         .await?
         .is_present()
     {

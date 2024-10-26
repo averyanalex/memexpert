@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use storage::Storage;
+use tokio::signal;
 use tracing::*;
 use tracing_subscriber::prelude::*;
 
@@ -79,12 +80,9 @@ async fn _main() -> Result<()> {
     let openai = Arc::new(openai::OpenAi::new());
     let storage = Storage::new(bot.clone(), openai.clone()).await?;
 
-    let (bot_res, web_res) = tokio::join!(
-        bot::run_bot(storage.clone(), openai, bot),
-        web::run_webserver(storage)
-    );
-    bot_res?;
-    web_res?;
-
-    Ok(())
+    tokio::select! {
+        bot_res = bot::run_bot(storage.clone(), openai, bot) => bot_res,
+        web_res = web::run_webserver(storage) => web_res,
+        _ = signal::ctrl_c() => Ok(())
+    }
 }

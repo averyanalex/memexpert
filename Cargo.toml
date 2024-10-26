@@ -8,19 +8,17 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-sea-orm = { version = "0.12", features = [
+sea-orm = { version = "1.1.0", features = [
     "sqlx-postgres",
     "runtime-tokio-native-tls",
     "macros",
 ] }
-tokio = { version = "1.37", features = ["full"] }
+tokio = { version = "1.41", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [dependencies]
-teloxide = { git = "https://github.com/teloxide/teloxide.git", features = [
-    "macros",
-] }
+teloxide = { version = "0.13.0", features = ["macros"] }
 
 tokio.workspace = true
 sea-orm.workspace = true
@@ -49,20 +47,20 @@ axum-extra = { version = "0.9", features = ["cookie"] }
 axum-range = "0.4"
 
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.121"
+serde_json = "1.0"
 
 reqwest = { version = "0.12", features = ["json", "brotli", "native-tls"] }
 reqwest-middleware = { version = "0.3.2", features = ["json"] }
-reqwest-retry = "0.6.0"
+reqwest-retry = "0.6.1"
 
-qdrant-client = { version = "1.10.1", default-features = false }
+qdrant-client = { version = "1.12.1", default-features = false }
 
 anyhow = "1.0"
-async-openai = "0.23.3"
-base64 = "0.22.1"
+async-openai = "0.25.0"
+base64 = "0.22"
 chrono = "0.4"
 include_dir = "0.7.3"
-itertools = "0.13.0"
+itertools = "0.13"
 mime = "0.3"
-mime_guess = "2.0.4"
+mime_guess = "2.0"
 rand = "0.8"

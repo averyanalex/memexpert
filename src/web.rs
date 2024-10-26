@@ -46,8 +46,8 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
     let addr = SocketAddr::from_str("0.0.0.0:3000")?;
     let listener = TcpListener::bind(addr).await?;
     info!("listening at {addr}");
-    axum::serve(listener, app).await?;
-    Ok(())
+
+    Ok(axum::serve(listener, app).await?)
 }
 
 #[derive(Clone)]
