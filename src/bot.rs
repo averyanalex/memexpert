@@ -165,6 +165,11 @@ async fn handle_message(
                 db.reindex_all().await?;
                 bot.send_message(msg.chat.id, "Reindex completed").await?;
                 return Ok(());
+            } else if text == "/retgmsg" {
+                db.refresh_all_control_messages(&bot).await?;
+                bot.send_message(msg.chat.id, "Control messages refresh completed")
+                    .await?;
+                return Ok(());
             } else if text.starts_with("/regen") {
                 if let [_, start, stop] = text.split_whitespace().collect::<Vec<_>>()[..] {
                     let updated_by = user.0.try_into()?;

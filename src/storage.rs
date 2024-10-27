@@ -19,8 +19,8 @@ use qdrant_client::{
     Qdrant,
 };
 use sea_orm::{
-    prelude::*, ActiveValue, ConnectOptions, Database, DatabaseTransaction, QueryOrder,
-    QuerySelect, TransactionTrait,
+    prelude::*, ActiveValue, ConnectOptions, Database, DatabaseTransaction, IntoActiveModel,
+    QueryOrder, QuerySelect, TransactionTrait,
 };
 use teloxide::{net::Download, requests::Requester, types::Message, Bot};
 use tokio::time;
@@ -92,6 +92,23 @@ impl Storage {
         {
             time::sleep(time::Duration::from_millis(100)).await;
             self.update_meme_in_qd(&meme, &translations).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn refresh_all_control_messages(&self, bot: &Bot) -> Result<()> {
+        for (meme, translations) in Memes::find()
+            .find_with_related(Translations)
+            .all(&self.dc)
+            .await?
+        {
+            time::sleep(time::Duration::from_millis(1000)).await;
+            if let Some(new_msg) = refresh_meme_control_msg(bot, &meme, &translations).await? {
+                let mut active = meme.into_active_model();
+                active.control_message_id = ActiveValue::set(new_msg.id.0);
+                active.save(&self.dc).await?;
+            }
         }
 
         Ok(())
