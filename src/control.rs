@@ -14,10 +14,11 @@ use teloxide::{
     },
 };
 
-use crate::add_dot_if_needed;
+use crate::ensure_ends_with_punctuation;
 
 #[derive(Clone)]
 pub enum MemeEditAction {
+    Ai,
     Slug,
     Title,
     Caption,
@@ -33,6 +34,7 @@ pub enum MemeEditAction {
 impl Display for MemeEditAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char(match self {
+            Self::Ai => 'a',
             Self::Title => 't',
             Self::Slug => 's',
             Self::Caption => 'c',
@@ -50,6 +52,7 @@ impl Display for MemeEditAction {
 impl MemeEditAction {
     fn from_char(char: char) -> Result<Self> {
         Ok(match char {
+            'a' => Self::Ai,
             't' => Self::Title,
             's' => Self::Slug,
             'c' => Self::Caption,
@@ -106,8 +109,8 @@ fn gen_meme_control_text(meme: &memes::Model, translations: &[translations::Mode
             t,
             "\n\n[{}] {}\nПодпись: {}\nОписание: {}",
             translation.language.to_uppercase(),
-            add_dot_if_needed(&translation.title),
-            add_dot_if_needed(&translation.caption),
+            ensure_ends_with_punctuation(&translation.title),
+            ensure_ends_with_punctuation(&translation.caption),
             translation.description
         )
         .unwrap();
@@ -190,6 +193,15 @@ fn gen_meme_control_keyboard(
                     }
                     .to_string(),
                 ),
+                InlineKeyboardButton::callback(
+                    "AI",
+                    MemeEditCallback {
+                        action: MemeEditAction::Ai,
+                        meme_id: meme.id,
+                        language: "  ".to_owned(),
+                    }
+                    .to_string(),
+                ),
             ],
             vec![
                 InlineKeyboardButton::callback(
@@ -256,6 +268,7 @@ fn gen_meme_control_keyboard(
     )
 }
 
+/// Update or create meme control message in admin channel.
 pub async fn refresh_meme_control_msg(
     bot: &Bot,
     meme: &memes::Model,

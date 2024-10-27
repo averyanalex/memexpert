@@ -24,7 +24,7 @@ use tracing::*;
 
 use crate::{
     control::{MemeEditAction, MemeEditCallback},
-    openai::OpenAi,
+    openai::{AiMetadata, OpenAi},
     storage::Storage,
 };
 
@@ -189,20 +189,22 @@ async fn handle_message(
                             meme.text = ActiveValue::set(ai_meta.fixed_text);
                             meme.slug = ActiveValue::set(ai_meta.slug);
 
-                            for translation in translations {
-                                if translation.language == "ru" {
-                                    let mut translation = translation.into_active_model();
+                            let translation_updates = translations
+                                .into_iter()
+                                .filter(|t| t.language == "ru")
+                                .map(|t| {
+                                    let mut translation = t.into_active_model();
                                     translation.title = ActiveValue::set(ai_meta.title_ru.clone());
                                     translation.caption =
                                         ActiveValue::set(ai_meta.subtitle_ru.clone());
                                     translation.description =
                                         ActiveValue::set(ai_meta.description_ru.clone());
+                                    translation
+                                })
+                                .collect();
 
-                                    db.update_meme_translation(translation, updated_by).await?;
-                                }
-                            }
-
-                            db.update_meme(meme, updated_by).await?;
+                            db.update_meme(meme, translation_updates, updated_by)
+                                .await?;
                         }
                     }
 
@@ -217,7 +219,7 @@ async fn handle_message(
                 let mut meme = memes::ActiveModel::new();
 
                 if let Some((file, thumb)) = try_set_file_from_msg(&msg, &mut meme)? {
-                    if let Some(meme) = db.meme_by_tg_unique_id(&file.unique_id).await? {
+                    if let Some(meme) = db.load_meme_by_tg_unique_id(&file.unique_id).await? {
                         bot.send_message(
                             msg.chat.id,
                             format!(
@@ -240,14 +242,11 @@ async fn handle_message(
                                     .await?,
                             )
                             .await?;
-                        meme.text = ActiveValue::set(ai_meta.fixed_text);
-                        meme.slug = ActiveValue::set(ai_meta.slug);
 
                         let mut translation = translations::ActiveModel::new();
                         translation.language = ActiveValue::set("ru".to_owned());
-                        translation.title = ActiveValue::set(ai_meta.title_ru);
-                        translation.caption = ActiveValue::set(ai_meta.subtitle_ru);
-                        translation.description = ActiveValue::set(ai_meta.description_ru);
+
+                        ai_meta.apply(&mut meme, &mut translation);
 
                         let control_msg = db.create_meme(meme.clone(), translation.clone()).await?;
                         let control_msg_url = control_msg.url().context("can't create url")?;
@@ -276,25 +275,58 @@ async fn handle_message(
                 };
 
                 match action {
+                    MemeEditAction::Ai => {
+                        let prompt = msg.text().context("no text")?;
+                        let (current_meme_ver, translations) = db
+                            .load_meme_with_translations_by_id(meme_id)
+                            .await?
+                            .context("meme not found")?;
+                        let ru_translation = translations
+                            .into_iter()
+                            .find(|t| t.language == "ru")
+                            .context("no ru translation")?;
+
+                        let thumb = db
+                            .load_tg_file(
+                                &current_meme_ver.thumb_tg_id,
+                                current_meme_ver.thumb_content_length.try_into()?,
+                            )
+                            .await?;
+                        let new_metadata = openai
+                            .edit_meme_metadata(
+                                AiMetadata::from_meme_with_translation(
+                                    current_meme_ver,
+                                    ru_translation,
+                                ),
+                                thumb,
+                                prompt,
+                            )
+                            .await?;
+
+                        new_metadata.apply(&mut meme, &mut translation);
+                        translation.language = ActiveValue::unchanged("ru".to_owned());
+
+                        db.update_meme(meme, vec![translation], updated_by).await?;
+                    }
                     MemeEditAction::Slug => {
                         let text = msg.text().context("no text")?;
                         meme.slug = ActiveValue::set(text.to_owned());
-                        db.update_meme(meme, updated_by).await?;
+                        db.update_meme(meme, vec![], updated_by).await?;
                     }
                     MemeEditAction::Title => {
                         let text = msg.text().context("no text")?;
                         translation.title = ActiveValue::set(text.to_owned());
-                        db.update_meme_translation(translation, updated_by).await?;
+                        db.update_meme(meme, vec![translation], updated_by).await?;
                     }
                     MemeEditAction::Caption => {
                         let text = msg.text().context("no text")?;
                         translation.caption = ActiveValue::set(text.to_owned());
-                        db.update_meme_translation(translation, updated_by).await?;
+                        db.update_meme(meme, vec![translation], updated_by).await?;
                     }
                     MemeEditAction::Description => {
                         let text = msg.text().context("no text")?;
                         translation.description = ActiveValue::set(text.to_owned());
-                        db.update_meme_translation(translation, updated_by).await?;
+                        db.update_meme(meme, vec![translation], updated_by).await?;
                     }
                     MemeEditAction::Text => {
                         let text = msg.text().context("no text")?;
@@ -303,7 +335,7 @@ async fn handle_message(
                         } else {
                             None
                         });
-                        db.update_meme(meme, updated_by).await?;
+                        db.update_meme(meme, vec![], updated_by).await?;
                     }
                     MemeEditAction::Source => {
                         let text = msg.text().context("no text")?;
@@ -312,11 +344,11 @@ async fn handle_message(
                         } else {
                             None
                         });
-                        db.update_meme(meme, updated_by).await?;
+                        db.update_meme(meme, vec![], updated_by).await?;
                     }
                     MemeEditAction::File => {
                         if try_set_file_from_msg(&msg, &mut meme)?.is_some() {
-                            db.update_meme(meme, updated_by).await?;
+                            db.update_meme(meme, vec![], updated_by).await?;
                         } else {
                             bot.send_message(msg.chat.id, "Нет файла или он не подходит")
                                 .await?;
@@ -398,6 +430,10 @@ async fn handle_callback_query(
     };
 
     match callback.action {
+        MemeEditAction::Ai => {
+            bot.send_message(user_id, "Отправьте промпт для редактирования")
+                .await?;
+        }
         MemeEditAction::Slug => {
             bot.send_message(user_id, "Отправьте новый слаг").await?;
         }
@@ -432,19 +468,19 @@ async fn handle_callback_query(
         }
         MemeEditAction::Publish => {
             meme.publish_status = ActiveValue::set(PublishStatus::Published);
-            db.update_meme(meme, user_id.0.try_into()?).await?;
+            db.update_meme(meme, vec![], user_id.0.try_into()?).await?;
             bot.answer_callback_query(q.id).await?;
             return Ok(());
         }
         MemeEditAction::Draft => {
             meme.publish_status = ActiveValue::set(PublishStatus::Draft);
-            db.update_meme(meme, user_id.0.try_into()?).await?;
+            db.update_meme(meme, vec![], user_id.0.try_into()?).await?;
             bot.answer_callback_query(q.id).await?;
             return Ok(());
         }
         MemeEditAction::Trash => {
             meme.publish_status = ActiveValue::set(PublishStatus::Trash);
-            db.update_meme(meme, user_id.0.try_into()?).await?;
+            db.update_meme(meme, vec![], user_id.0.try_into()?).await?;
             bot.answer_callback_query(q.id).await?;
             return Ok(());
         }

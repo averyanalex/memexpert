@@ -134,7 +134,7 @@ async fn file(
     let slug = splitten[0];
 
     Ok(
-        if let Some((meme, _)) = state.db.meme_with_translations_by_slug(slug).await? {
+        if let Some((meme, _)) = state.db.load_meme_with_translations_by_slug(slug).await? {
             let (tg_id, content_length) = if splitten.len() == 3 {
                 (meme.thumb_tg_id, meme.thumb_content_length)
             } else {
@@ -187,7 +187,8 @@ async fn meme(
     jar: CookieJar,
 ) -> Result<Response, AppError> {
     Ok(
-        if let Some((meme, translations)) = state.db.meme_with_translations_by_slug(&slug).await?
+        if let Some((meme, translations)) =
+            state.db.load_meme_with_translations_by_slug(&slug).await?
             && let Some(translation) = translations.into_iter().find(|tr| tr.language == language)
         {
             let mime_type: mime::Mime = meme.mime_type.parse()?;
@@ -234,7 +235,7 @@ async fn meme(
 
                 ..Default::default()
             };
-            state.db.create_web_visit(visit).await?;
+            state.db.save_web_visit(visit).await?;
 
             let headers = [(header::CONTENT_LANGUAGE, translation.language)];
 

@@ -17,9 +17,9 @@ mod openai;
 mod storage;
 mod web;
 
-pub fn add_dot_if_needed(text: &str) -> String {
+pub fn ensure_ends_with_punctuation(text: &str) -> String {
     let last_char = text.chars().last().unwrap_or('.');
-    if last_char == '.' || last_char == '!' || last_char == '?' {
+    if last_char.is_ascii_punctuation() {
         text.to_owned()
     } else {
         format!("{text}.")

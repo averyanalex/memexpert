@@ -19,13 +19,13 @@ use qdrant_client::{
     Qdrant,
 };
 use sea_orm::{
-    prelude::*, ActiveValue, ConnectOptions, Database, QueryOrder, QuerySelect, TransactionTrait,
+    prelude::*, ActiveValue, ConnectOptions, Database, DatabaseTransaction, QueryOrder,
+    QuerySelect, TransactionTrait,
 };
 use teloxide::{net::Download, requests::Requester, types::Message, Bot};
 use tokio::time;
 use tracing::log::LevelFilter;
 
-use crate::add_dot_if_needed;
 use crate::{control::refresh_meme_control_msg, openai::OpenAi};
 
 #[derive(Clone)]
@@ -60,6 +60,7 @@ impl Storage {
         Ok(storage)
     }
 
+    /// Create qdrant index if it doesn't exist
     async fn create_indexes(&self) -> Result<()> {
         if !self.qd.collection_exists("memexpert").await? {
             let mut vectors_config = VectorsConfigBuilder::default();
@@ -78,6 +79,7 @@ impl Storage {
         Ok(())
     }
 
+    /// Drop qdrant index and recreate it
     pub async fn reindex_all(&self) -> Result<()> {
         self.create_indexes().await?;
         self.qd.delete_collection("memexpert").await?;
@@ -89,20 +91,23 @@ impl Storage {
             .await?
         {
             time::sleep(time::Duration::from_millis(100)).await;
-            self.create_or_replace_meme_in_qd(&meme, &translations)
-                .await?;
+            self.update_meme_in_qd(&meme, &translations).await?;
         }
 
         Ok(())
     }
 
-    async fn create_or_replace_meme_in_qd(
+    /// Create, update or delete meme in qdrant index
+    async fn update_meme_in_qd(
         &self,
         meme: &memes::Model,
         translations: &[translations::Model],
     ) -> Result<()> {
         if meme.publish_status == PublishStatus::Published {
-            let text_embedding = self.get_text_embedding(meme, translations).await?;
+            let text_embedding = self
+                .openai
+                .gen_meme_text_embedding(meme, translations)
+                .await?;
 
             self.qd
                 .upsert_points(
@@ -134,37 +139,16 @@ impl Storage {
         Ok(())
     }
 
-    async fn get_text_embedding(
+    /// Refresh control message, update meme in qdrant index and load files from Telegram
+    async fn commit_meme_edition(
         &self,
-        meme: &memes::Model,
-        translations: &[translations::Model],
-    ) -> Result<Vec<f32>> {
-        let translation = translations.first().context("no translations")?;
-
-        let mut text = format!(
-            "Мем \"{}\".\n{}\n\n{}",
-            translation.title,
-            add_dot_if_needed(&translation.caption),
-            translation.description
-        );
-
-        if let Some(text_on_meme) = &meme.text {
-            text += "\n\nТекст: ";
-            text += text_on_meme;
-        }
-
-        self.openai.embedding(text).await
-    }
-
-    async fn process_meme_update(
-        &self,
-        trans: &impl ConnectionTrait,
+        trans: DatabaseTransaction,
         meme_id: i32,
     ) -> Result<Option<Message>> {
-        let (meme, translations) = Memes::find()
+        // Load final meme version
+        let (meme, translations) = Memes::find_by_id(meme_id)
             .find_with_related(Translations)
-            .filter(memes::Column::Id.eq(meme_id))
-            .all(trans)
+            .all(&trans)
             .await?
             .into_iter()
             .next()
@@ -178,20 +162,75 @@ impl Storage {
                 control_message_id: ActiveValue::set(control_msg.id.0),
                 ..Default::default()
             }
-            .save(trans)
+            .save(&trans)
             .await?;
         }
-        self.create_or_replace_meme_in_qd(&meme, &translations)
-            .await?;
+        self.update_meme_in_qd(&meme, &translations).await?;
 
         self.load_tg_file(&meme.tg_id, meme.content_length.try_into()?)
             .await?;
         self.load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
             .await?;
 
+        trans.commit().await?;
+
         Ok(control_msg)
     }
 
+    pub async fn update_meme(
+        &self,
+        mut meme: memes::ActiveModel,
+        translations: Vec<translations::ActiveModel>,
+        updated_by: i64,
+    ) -> Result<()> {
+        ensure!(meme.id.is_unchanged());
+        let meme_id = meme.id.clone().unwrap();
+
+        for translation in &translations {
+            ensure!(translation.meme_id.is_unchanged());
+            ensure!(translation.meme_id.clone().unwrap() == meme_id);
+        }
+
+        let trans = self.dc.begin().await?;
+
+        let prev_meme_version = Memes::find_by_id(meme_id)
+            .one(&trans)
+            .await?
+            .context("meme not found")?;
+
+        if meme.slug.is_set() {
+            let new_slug = meme.slug.clone().unwrap();
+            if prev_meme_version.slug != new_slug {
+                self.bruteforce_available_slug(&trans, &mut meme).await?;
+
+                SlugRedirects::insert(slug_redirects::ActiveModel {
+                    slug: ActiveValue::set(prev_meme_version.slug.clone()),
+                    meme_id: ActiveValue::set(meme_id),
+                })
+                .on_conflict(
+                    OnConflict::column(slug_redirects::Column::Slug)
+                        .update_column(slug_redirects::Column::MemeId)
+                        .to_owned(),
+                )
+                .exec(&trans)
+                .await?;
+            }
+        }
+
+        meme.last_edited_by = ActiveValue::set(updated_by);
+        meme.last_edition_time = ActiveValue::set(Utc::now().naive_utc());
+        meme.save(&trans).await?;
+
+        for translation in translations {
+            translation.save(&trans).await?;
+        }
+
+        self.commit_meme_edition(trans, meme_id).await?;
+
+        Ok(())
+    }
+
+    /// Create meme with translation
     pub async fn create_meme(
         &self,
         mut meme: memes::ActiveModel,
@@ -211,15 +250,14 @@ impl Storage {
         Translations::insert(translation).exec(&trans).await?;
 
         let control_msg = self
-            .process_meme_update(&trans, meme.id)
+            .commit_meme_edition(trans, meme.id)
             .await?
             .context("must create control message")?;
 
-        trans.commit().await?;
         Ok(control_msg)
     }
 
-    pub async fn meme_with_translations_by_slug(
+    pub async fn load_meme_with_translations_by_slug(
         &self,
         slug: &str,
     ) -> Result<Option<(memes::Model, Vec<translations::Model>)>> {
@@ -232,7 +270,22 @@ impl Storage {
             .next())
     }
 
-    pub async fn meme_by_tg_unique_id(&self, tg_unique_id: &str) -> Result<Option<memes::Model>> {
+    pub async fn load_meme_with_translations_by_id(
+        &self,
+        id: i32,
+    ) -> Result<Option<(memes::Model, Vec<translations::Model>)>> {
+        Ok(Memes::find_by_id(id)
+            .find_with_related(Translations)
+            .all(&self.dc)
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    pub async fn load_meme_by_tg_unique_id(
+        &self,
+        tg_unique_id: &str,
+    ) -> Result<Option<memes::Model>> {
         Ok(Memes::find()
             .filter(memes::Column::TgUniqueId.eq(tg_unique_id))
             .one(&self.dc)
@@ -268,78 +321,7 @@ impl Storage {
         Ok(())
     }
 
-    async fn update_meme_internal(
-        &self,
-        trans: &impl ConnectionTrait,
-        mut meme: memes::ActiveModel,
-        updated_by: i64,
-    ) -> Result<()> {
-        let meme_id = meme.id.clone().unwrap();
-
-        let old_meme = Memes::find_by_id(meme_id)
-            .one(trans)
-            .await?
-            .context("meme not found")?;
-
-        if meme.slug.is_set() {
-            let new_slug = meme.slug.clone().unwrap();
-            if old_meme.slug != new_slug {
-                self.bruteforce_available_slug(trans, &mut meme).await?;
-
-                SlugRedirects::insert(slug_redirects::ActiveModel {
-                    slug: ActiveValue::set(old_meme.slug.clone()),
-                    meme_id: ActiveValue::set(meme_id),
-                })
-                .on_conflict(
-                    OnConflict::column(slug_redirects::Column::Slug)
-                        .update_column(slug_redirects::Column::MemeId)
-                        .to_owned(),
-                )
-                .exec(trans)
-                .await?;
-            }
-        }
-
-        meme.last_edited_by = ActiveValue::set(updated_by);
-        meme.last_edition_time = ActiveValue::set(Utc::now().naive_utc());
-        meme.save(trans).await?;
-
-        self.process_meme_update(trans, meme_id).await?;
-
-        Ok(())
-    }
-
-    pub async fn update_meme(&self, meme: memes::ActiveModel, updated_by: i64) -> Result<()> {
-        let trans = self.dc.begin().await?;
-        self.update_meme_internal(&trans, meme, updated_by).await?;
-        trans.commit().await?;
-        Ok(())
-    }
-
-    pub async fn update_meme_translation(
-        &self,
-        translation: translations::ActiveModel,
-        updated_by: i64,
-    ) -> Result<()> {
-        let trans = self.dc.begin().await?;
-        let meme_id = translation.meme_id.clone().unwrap();
-
-        translation.save(&trans).await?;
-
-        self.update_meme_internal(
-            &trans,
-            memes::ActiveModel {
-                id: ActiveValue::unchanged(meme_id),
-                ..Default::default()
-            },
-            updated_by,
-        )
-        .await?;
-
-        trans.commit().await?;
-        Ok(())
-    }
-
+    /// Search most relevant memes by query
     pub async fn search_memes(
         &self,
         user_id: i64,
@@ -371,7 +353,7 @@ impl Storage {
                 .map(|i| (i, 'r'))
                 .collect_vec()
         } else {
-            let text_embedding = self.openai.embedding(query).await?;
+            let text_embedding = self.openai.text_embedding(query).await?;
 
             let qd_results = self
                 .qd
@@ -431,6 +413,7 @@ impl Storage {
         Ok(memes)
     }
 
+    /// Get the new slug by the old slug
     pub async fn get_slug_redirect(&self, slug: &str) -> Result<Option<String>> {
         if let Some(meme_id) = SlugRedirects::find_by_id(slug)
             .one(&self.dc)
@@ -446,6 +429,7 @@ impl Storage {
         }
     }
 
+    /// Get all memes with translations
     pub async fn all_memes_with_translations(
         &self,
     ) -> Result<Vec<(memes::Model, Vec<translations::Model>)>> {
@@ -457,6 +441,7 @@ impl Storage {
         Ok(memes)
     }
 
+    /// Save chosen in Telegram inline mode meme into database
     pub async fn save_tg_chosen(
         &self,
         id: i64,
@@ -476,11 +461,13 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn create_web_visit(&self, visit: web_visits::ActiveModel) -> Result<()> {
+    /// Save web visit into database
+    pub async fn save_web_visit(&self, visit: web_visits::ActiveModel) -> Result<()> {
         WebVisits::insert(visit).exec(&self.dc).await?;
         Ok(())
     }
 
+    /// Load and cache into database file from Telegram by its id
     pub async fn load_tg_file(&self, id: &str, size: usize) -> Result<Vec<u8>> {
         if let Some(cached) = FilesCache::find_by_id(id).one(&self.dc).await? {
             Ok(cached.data)
