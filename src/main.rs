@@ -76,7 +76,7 @@ fn main() -> Result<()> {
 }
 
 async fn _main() -> Result<()> {
-    let bot = teloxide::Bot::from_env();
+    let bot = bot::new_bot();
     let openai = Arc::new(openai::OpenAi::new());
     let storage = Storage::new(bot.clone(), openai.clone()).await?;
 

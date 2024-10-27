@@ -12,6 +12,7 @@ use entities::{
 use itertools::Itertools;
 use sea_orm::{ActiveModelBehavior, ActiveValue, IntoActiveModel};
 use teloxide::{
+    adaptors::throttle::Limits,
     prelude::*,
     types::{
         ChatAction, FileMeta, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
@@ -27,6 +28,14 @@ use crate::{
     openai::{AiMetadata, OpenAi},
     storage::Storage,
 };
+
+pub type Bot = teloxide::adaptors::Throttle<teloxide::adaptors::CacheMe<teloxide::Bot>>;
+
+pub fn new_bot() -> Bot {
+    teloxide::Bot::from_env()
+        .cache_me()
+        .throttle(Limits::default())
+}
 
 pub async fn run_bot(db: Storage, openai: Arc<OpenAi>, bot: Bot) -> Result<()> {
     let handler = dptree::entry()

@@ -22,10 +22,11 @@ use sea_orm::{
     prelude::*, ActiveValue, ConnectOptions, Database, DatabaseTransaction, IntoActiveModel,
     QueryOrder, QuerySelect, TransactionTrait,
 };
-use teloxide::{net::Download, requests::Requester, types::Message, Bot};
+use teloxide::{net::Download, requests::Requester, types::Message};
 use tokio::time;
 use tracing::log::LevelFilter;
 
+use crate::bot::Bot;
 use crate::{control::refresh_meme_control_msg, openai::OpenAi};
 
 #[derive(Clone)]
@@ -103,12 +104,12 @@ impl Storage {
             .all(&self.dc)
             .await?
         {
-            time::sleep(time::Duration::from_millis(1000)).await;
             if let Some(new_msg) = refresh_meme_control_msg(bot, &meme, &translations).await? {
                 let mut active = meme.into_active_model();
                 active.control_message_id = ActiveValue::set(new_msg.id.0);
                 active.save(&self.dc).await?;
             }
+            time::sleep(time::Duration::from_secs(12)).await;
         }
 
         Ok(())

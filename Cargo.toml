@@ -18,7 +18,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [dependencies]
-teloxide = { version = "0.13.0", features = ["macros"] }
+teloxide = { version = "0.13.0", features = ["macros", "throttle", "cache-me"] }
 
 tokio.workspace = true
 sea-orm.workspace = true
