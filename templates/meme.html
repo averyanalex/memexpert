@@ -1,12 +1,11 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} - Мем Эксперт{% endblock %}
 
 {% block head %}
 <meta name="description" content="{{ caption }}" />
 <meta property="og:title" content="{{ title }}" />
 <meta property="og:description" content="{{ caption }}" />
-<meta property="og:site_name" content="MemeXpert" />
 <meta property="og:url" content="https://memexpert.xyz/{{ language }}/{{ slug }}" />
 <meta property="og:locale" content="{{ locale }}" />
 {% if is_mime_video %}
@@ -81,29 +80,35 @@
         <div class="flex flex-col gap-4">
             {% if let Some(text) = text %}
             <div>
-                <h2 class="font-bold text-gray-900 dark:text-gray-100">
-                    Текст на меме
-                </h2>
+                <span data-nosnippet>
+                    <h2 class="font-bold text-gray-900 dark:text-gray-100">
+                        Текст на меме
+                    </h2>
+                </span>
                 <p itemprop="embeddedTextCaption" class="text-gray-900 dark:text-gray-100">
                     {{ text }}
                 </p>
             </div>
             {% endif %}
             <div>
-                <h2 class="font-bold text-gray-900 dark:text-gray-100">
-                    Описание содержимого мема
-                </h2>
+                <span data-nosnippet>
+                    <h2 class="font-bold text-gray-900 dark:text-gray-100">
+                        Описание содержимого мема
+                    </h2>
+                </span>
                 <p itemprop="description" class="text-gray-900 dark:text-gray-100">
                     {{ description }}
                 </p>
             </div>
-            {% if let Some(source) = source %}
-            <h3 itemprop="creditText" class="font-semibold text-gray-800 dark:text-gray-200">Источник мема: <a
-                    class="underline" target="_blank" href="{{ source }}">{{ source }}</a>.</h3>
-            {% else %}
-            <meta itemprop="creditText" content="Источник мема неизвестен." />
-            {% endif %}
-            <div class="flex flex-col items-center mb-1">
+            <span data-nosnippet>
+                {% if let Some(source) = source %}
+                <h3 itemprop="creditText" class="font-semibold text-gray-800 dark:text-gray-200">Источник
+                    мема: <a class="underline" target="_blank" href="{{ source }}">{{ source }}</a>.</h3>
+                {% else %}
+                <meta itemprop="creditText" content="Источник мема неизвестен." />
+                {% endif %}
+            </span>
+            <div data-nosnippet class="flex flex-col items-center mb-1">
                 <a download href="/static/{{ filename }}"
                     class="max-w-48 inline-flex items-center justify-center px-5 py-3 text-base font-medium text-center text-white bg-blue-700 rounded-md shadow-md hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 dark:focus:ring-blue-900">
                     <svg class="fill-current w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
