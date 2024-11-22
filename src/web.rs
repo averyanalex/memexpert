@@ -22,6 +22,7 @@ use axum_extra::{
 };
 use axum_range::{KnownSize, Ranged};
 use chrono::SecondsFormat;
+use entities::memes;
 use entities::{sea_orm_active_enums::MediaType, web_visits};
 use include_dir::{include_dir, Dir};
 use rand::{distributions::Alphanumeric, Rng};
@@ -180,6 +181,18 @@ fn get_header(headers: &HeaderMap, name: HeaderName) -> Option<String> {
     }
 }
 
+fn memes_to_gallery(memes: &[memes::Model]) -> Vec<GalleryImage> {
+    memes
+        .iter()
+        .map(|m| GalleryImage {
+            filename: format!("{}.thumb.jpg", m.slug),
+            width: m.thumb_width,
+            height: m.thumb_height,
+            href: format!("/ru/{}", m.slug),
+        })
+        .collect()
+}
+
 async fn meme(
     State(state): State<AppState>,
     Path((language, slug)): Path<(String, String)>,
@@ -237,6 +250,8 @@ async fn meme(
             };
             state.db.save_web_visit(visit).await?;
 
+            let similar_memes = state.db.similar_memes(meme.id, 50).await?;
+
             let headers = [(header::CONTENT_LANGUAGE, translation.language)];
 
             (
@@ -268,6 +283,7 @@ async fn meme(
                         .and_utc()
                         .to_rfc3339_opts(SecondsFormat::Secs, false),
                     source: meme.source,
+                    gallery: memes_to_gallery(&similar_memes),
                 },
             )
                 .into_response()
@@ -279,22 +295,33 @@ async fn meme(
     )
 }
 
-async fn index() -> Result<Response, AppError> {
+async fn index(State(state): State<AppState>) -> Result<Response, AppError> {
     let headers = [(header::CONTENT_LANGUAGE, "ru")];
+
+    let popular_memes = state.db.popular_memes(50).await?;
 
     Ok((
         headers,
         IndexTemplate {
             language: "ru".to_string(),
+            gallery: memes_to_gallery(&popular_memes),
         },
     )
         .into_response())
+}
+
+struct GalleryImage {
+    filename: String,
+    width: i32,
+    height: i32,
+    href: String,
 }
 
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexTemplate {
     language: String,
+    gallery: Vec<GalleryImage>,
 }
 
 #[derive(Template)]
@@ -322,6 +349,7 @@ struct MemeTemplate {
     duration_secs: i32,
     created_date: String,
     source: Option<String>,
+    gallery: Vec<GalleryImage>,
 }
 
 #[derive(Template)]

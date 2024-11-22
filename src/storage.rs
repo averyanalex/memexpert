@@ -407,6 +407,29 @@ impl Storage {
         self.memes_by_ids(&ids, limit as usize).await
     }
 
+    pub async fn similar_memes(&self, meme_id: i32, limit: u64) -> Result<Vec<memes::Model>> {
+        let ids: Vec<_> = self
+            .qd
+            .query(
+                QueryPointsBuilder::new("memexpert")
+                    .query(QdQuery::new_nearest(meme_id as u64))
+                    .using("text-dense")
+                    .limit(limit * 2),
+            )
+            .await?
+            .result
+            .into_iter()
+            .map(
+                |r| match r.id.unwrap_or_default().point_id_options.unwrap() {
+                    PointIdOptions::Num(n) => n as i32,
+                    PointIdOptions::Uuid(_) => -1,
+                },
+            )
+            .collect();
+
+        self.memes_by_ids(&ids, limit as usize).await
+    }
+
     /// Search most relevant memes by query
     pub async fn search_memes(
         &self,
