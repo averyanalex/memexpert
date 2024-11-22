@@ -135,9 +135,9 @@ impl OpenAi {
 
     pub async fn text_embedding(&self, text: impl Into<String>) -> Result<Vec<f32>> {
         let request = CreateEmbeddingRequestArgs::default()
-            .model("text-embedding-3-small")
+            .model("text-embedding-3-large")
             .input(EmbeddingInput::String(text.into()))
-            .user("gdzach")
+            .user("memexpert")
             .build()?;
 
         let response = self.client.embeddings().create(request).await?;

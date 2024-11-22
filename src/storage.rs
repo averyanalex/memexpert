@@ -76,7 +76,7 @@ impl Storage {
             let mut vectors_config = VectorsConfigBuilder::default();
             vectors_config.add_named_vector_params(
                 "text-dense",
-                VectorParamsBuilder::new(1536, Distance::Cosine),
+                VectorParamsBuilder::new(3072, Distance::Cosine),
             );
 
             self.qd
