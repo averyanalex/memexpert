@@ -14,7 +14,7 @@ use teloxide::{
     },
 };
 
-use crate::{ensure_ends_with_punctuation, bot::Bot};
+use crate::{bot::Bot, ensure_ends_with_punctuation};
 
 #[derive(Clone)]
 pub enum MemeEditAction {
