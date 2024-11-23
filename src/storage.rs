@@ -31,7 +31,7 @@ use qdrant_client::{
 use teloxide::{net::Download, requests::Requester, types::Message};
 
 use crate::bot::Bot;
-use crate::{control::refresh_meme_control_msg, openai::OpenAi};
+use crate::{control::refresh_meme_control_msg, ai::Ai};
 
 #[derive(FromQueryResult)]
 struct TgUseOnlyMemeId {
@@ -43,11 +43,11 @@ pub struct Storage {
     dc: DatabaseConnection,
     qd: Arc<Qdrant>,
     bot: Bot,
-    openai: Arc<OpenAi>,
+    openai: Arc<Ai>,
 }
 
 impl Storage {
-    pub async fn new(bot: Bot, openai: Arc<OpenAi>) -> Result<Self> {
+    pub async fn new(bot: Bot, openai: Arc<Ai>) -> Result<Self> {
         let db_url = std::env::var("DATABASE_URL")?;
 
         let mut conn_options = ConnectOptions::new(db_url);
@@ -76,8 +76,10 @@ impl Storage {
             let mut vectors_config = VectorsConfigBuilder::default();
             vectors_config.add_named_vector_params(
                 "text-dense",
-                VectorParamsBuilder::new(3072, Distance::Cosine),
+                VectorParamsBuilder::new(1024, Distance::Dot),
             );
+            vectors_config
+                .add_named_vector_params("image", VectorParamsBuilder::new(1024, Distance::Dot));
 
             self.qd
                 .create_collection(
@@ -131,9 +133,13 @@ impl Storage {
         translations: &[translations::Model],
     ) -> Result<()> {
         if meme.publish_status == PublishStatus::Published {
-            let text_embedding = self
+            let thumb = self
+                .load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
+                .await?;
+
+            let (text_embed, image_embed) = self
                 .openai
-                .gen_meme_text_embedding(meme, translations)
+                .gen_meme_embedding(meme, thumb, translations)
                 .await?;
 
             self.qd
@@ -142,9 +148,12 @@ impl Storage {
                         "memexpert",
                         vec![PointStruct::new(
                             u64::try_from(meme.id)?,
-                            [("text-dense".to_owned(), text_embedding)]
-                                .into_iter()
-                                .collect::<HashMap<_, _>>(),
+                            [
+                                ("text-dense".to_owned(), text_embed),
+                                ("image".to_owned(), image_embed),
+                            ]
+                            .into_iter()
+                            .collect::<HashMap<_, _>>(),
                             Payload::new(),
                         )],
                     )
@@ -412,9 +421,21 @@ impl Storage {
             .qd
             .query(
                 QueryPointsBuilder::new("memexpert")
-                    .query(QdQuery::new_nearest(meme_id as u64))
-                    .using("text-dense")
-                    .limit(limit * 2),
+                    .add_prefetch(
+                        PrefetchQueryBuilder::default()
+                            .query(QdQuery::new_nearest(meme_id as u64))
+                            .using("text-dense")
+                            .limit(limit),
+                    )
+                    .add_prefetch(
+                        PrefetchQueryBuilder::default()
+                            .query(QdQuery::new_nearest(meme_id as u64))
+                            .using("image")
+                            .limit(limit),
+                    )
+                    .query(QdQuery::new_fusion(Fusion::Rrf))
+                    .limit(100)
+                    .limit(limit),
             )
             .await?
             .result
@@ -468,8 +489,14 @@ impl Storage {
                     QueryPointsBuilder::new("memexpert")
                         .add_prefetch(
                             PrefetchQueryBuilder::default()
-                                .query(QdQuery::new_nearest(text_embedding))
+                                .query(QdQuery::new_nearest(text_embedding.clone()))
                                 .using("text-dense")
+                                .limit(100u32),
+                        )
+                        .add_prefetch(
+                            PrefetchQueryBuilder::default()
+                                .query(QdQuery::new_nearest(text_embedding))
+                                .using("image")
                                 .limit(100u32),
                         )
                         .query(QdQuery::new_fusion(Fusion::Rrf))

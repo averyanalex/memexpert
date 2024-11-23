@@ -13,7 +13,7 @@ use tracing_subscriber::prelude::*;
 
 mod bot;
 mod control;
-mod openai;
+mod ai;
 mod storage;
 mod web;
 
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
 
 async fn _main() -> Result<()> {
     let bot = bot::new_bot();
-    let openai = Arc::new(openai::OpenAi::new());
+    let openai = Arc::new(ai::Ai::new());
     let storage = Storage::new(bot.clone(), openai.clone()).await?;
 
     tokio::select! {

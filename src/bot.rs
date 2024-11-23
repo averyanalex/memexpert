@@ -25,7 +25,7 @@ use tracing::*;
 
 use crate::{
     control::{MemeEditAction, MemeEditCallback},
-    openai::{AiMetadata, OpenAi},
+    ai::{Ai, AiMetadata},
     storage::Storage,
 };
 
@@ -37,7 +37,7 @@ pub fn new_bot() -> Bot {
         .throttle(Limits::default())
 }
 
-pub async fn run_bot(db: Storage, openai: Arc<OpenAi>, bot: Bot) -> Result<()> {
+pub async fn run_bot(db: Storage, openai: Arc<Ai>, bot: Bot) -> Result<()> {
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(handle_message))
         .branch(Update::filter_callback_query().endpoint(handle_callback_query))
@@ -146,7 +146,7 @@ async fn handle_message(
     bot: Bot,
     msg: Message,
     db: Storage,
-    openai: Arc<OpenAi>,
+    openai: Arc<Ai>,
     states: StateStorage,
 ) -> Result<()> {
     let admin_chat_id: i64 = std::env::var("ADMIN_CHANNEL_ID")?.parse()?;

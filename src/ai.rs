@@ -6,13 +6,13 @@ use async_openai::{
         ChatCompletionRequestMessageContentPartText, ChatCompletionRequestUserMessageArgs,
         ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
         ChatCompletionTool, ChatCompletionToolChoiceOption, ChatCompletionToolType,
-        CreateChatCompletionRequestArgs, CreateEmbeddingRequestArgs, EmbeddingInput,
-        FunctionObject, ImageDetail, ImageUrl,
+        CreateChatCompletionRequestArgs, FunctionObject, ImageDetail, ImageUrl,
     },
     Client,
 };
 use base64::prelude::*;
 use entities::{memes, translations};
+use itertools::Itertools;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, json};
@@ -60,8 +60,10 @@ impl AiMetadata {
     }
 }
 
-pub struct OpenAi {
+pub struct Ai {
     client: Client<OpenAIConfig>,
+    http: reqwest::Client,
+    jina_token: String,
 }
 
 fn save_metadata_tool() -> ChatCompletionTool {
@@ -127,34 +129,63 @@ fn text_to_messagepart(text: String) -> ChatCompletionRequestUserMessageContentP
     })
 }
 
-impl OpenAi {
+#[derive(Deserialize)]
+struct JinaAiResponse {
+    data: Vec<JinaAiEmbedding>,
+}
+
+#[derive(Deserialize)]
+struct JinaAiEmbedding {
+    embedding: Vec<f32>,
+}
+
+impl Ai {
     pub fn new() -> Self {
         let client = Client::new();
-        Self { client }
+        Self {
+            client,
+            http: reqwest::Client::new(),
+            jina_token: std::env::var("JINA_API").expect("JINA_API must be provided"),
+        }
     }
 
     pub async fn text_embedding(&self, text: impl Into<String>) -> Result<Vec<f32>> {
-        let request = CreateEmbeddingRequestArgs::default()
-            .model("text-embedding-3-large")
-            .input(EmbeddingInput::String(text.into()))
-            .user("memexpert")
-            .build()?;
+        let req = json!({
+            "model": "jina-clip-v2",
+            "dimensions": 1024,
+            "task": "retrieval.query",
+            "normalized": true,
+            "embedding_type": "float",
+            "input": [
+                {
+                    "text": text.into(),
+                },
+            ],
+        });
 
-        let response = self.client.embeddings().create(request).await?;
+        let res: JinaAiResponse = self
+            .http
+            .post("https://api.jina.ai/v1/embeddings")
+            .json(&req)
+            .bearer_auth(&self.jina_token)
+            .send()
+            .await?
+            .json()
+            .await?;
 
-        Ok(response
-            .data
+        res.data
             .into_iter()
+            .map(|e| e.embedding)
             .next()
-            .context("no data")?
-            .embedding)
+            .context("can't get result")
     }
 
-    pub async fn gen_meme_text_embedding(
+    pub async fn gen_meme_embedding(
         &self,
         meme: &memes::Model,
+        thumb: Vec<u8>,
         translations: &[translations::Model],
-    ) -> Result<Vec<f32>> {
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
         let translation = translations.first().context("no translations")?;
 
         let mut text = format!(
@@ -169,7 +200,36 @@ impl OpenAi {
             text += text_on_meme;
         }
 
-        self.text_embedding(text).await
+        let req = json!({
+            "model": "jina-clip-v2",
+            "dimensions": 1024,
+            "normalized": true,
+            "embedding_type": "float",
+            "input": [
+                {
+                    "text": text,
+                },
+                {
+                    "image": BASE64_STANDARD.encode(thumb)
+                }
+            ],
+        });
+
+        let res: JinaAiResponse = self
+            .http
+            .post("https://api.jina.ai/v1/embeddings")
+            .json(&req)
+            .bearer_auth(&self.jina_token)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        res.data
+            .into_iter()
+            .map(|e| e.embedding)
+            .collect_tuple()
+            .context("can't build 2-element tuple")
     }
 
     pub async fn gen_meme_metadata(&self, image: Vec<u8>) -> Result<AiMetadata> {
