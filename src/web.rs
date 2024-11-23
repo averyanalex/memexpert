@@ -24,7 +24,7 @@ use axum_extra::{
 };
 use axum_range::{KnownSize, Ranged};
 use chrono::SecondsFormat;
-use entities::memes;
+use entities::{memes, translations};
 use entities::{sea_orm_active_enums::MediaType, web_visits};
 use include_dir::{include_dir, Dir};
 use rand::{distributions::Alphanumeric, Rng};
@@ -97,17 +97,12 @@ async fn sitemap_xml(State(state): State<AppState>) -> Result<Response, AppError
     let memes: Vec<_> = memes
         .into_iter()
         .map(|(m, trs)| SitemapMeme {
-            slug: m.slug,
             lastmod: m
                 .last_edition_time
                 .and_utc()
                 .to_rfc3339_opts(SecondsFormat::Secs, false),
-            translations: trs
-                .into_iter()
-                .map(|tr| SitemapTranslation {
-                    language: tr.language,
-                })
-                .collect(),
+            m,
+            trs,
         })
         .collect();
 
@@ -394,13 +389,9 @@ struct SitemapTemplate {
 }
 
 struct SitemapMeme {
-    slug: String,
+    m: memes::Model,
     lastmod: String,
-    translations: Vec<SitemapTranslation>,
-}
-
-struct SitemapTranslation {
-    language: String,
+    trs: Vec<translations::Model>,
 }
 
 struct AppError(anyhow::Error);
