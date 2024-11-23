@@ -47,59 +47,58 @@
         {{ title }}
     </h1>
     <div class="w-full flex flex-col lg:flex-row gap-6">
-        <figure class="w-full">
-            <div class="flex justify-center items-center">
-                {% if is_mime_video %}
-                <video itemprop="contentUrl" src="/static/{{ filename }}" poster="/static/{{ thumb_filename }}"
-                    class="h-auto w-full max-w-full rounded-md shadow-md shadow-gray-200 dark:shadow-gray-800"
-                    width="{{ width }}" height="{{ height }}" {% if is_animation %}loop muted autoplay{% else
-                    %}controls{% endif %}>
-                    Your browser doesn't support HTML5 video tag.
-                </video>
-                <meta itemprop="duration" content="{{ duration }}" />
-                <link itemprop="thumbnailUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
-                <meta itemprop="allowEmbed" content="true" />
-                <meta itemprop="content_id" content="{{ id }}" />
-                <span itemprop="thumbnail" itemscope itemtype="https://schema.org/ImageObject">
-                    <link itemprop="contentUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
-                    <meta itemprop="width" content="{{ thumb_width }}" />
-                    <meta itemprop="height" content="{{ thumb_height }}" />
-                    <meta itemprop="encodingFormat" content="{{ thumb_mime_type }}" />
-                </span>
-                {% else %}
-                <img itemprop="contentUrl" src="/static/{{ filename }}" title="{{ title }}" alt="{{ caption }}"
-                    class="h-auto w-full max-w-full rounded-md shadow-lg shadow-gray-200 dark:shadow-gray-800"
-                    width="{{ width }}" height="{{ height }}" />
-                <meta itemprop="representativeOfPage" content="true" />
-                {% endif %}
-            </div>
-            <figcaption itemprop="caption" class="mt-2 text-xl text-center text-gray-800 dark:text-gray-200">
-                {{ caption }}
-            </figcaption>
-        </figure>
         <div class="flex flex-col gap-4">
+            <figure class="lg:min-w-96 w-full">
+                <div class="flex justify-center items-center">
+                    {% if is_mime_video %}
+                    <video itemprop="contentUrl" src="/static/{{ filename }}" poster="/static/{{ thumb_filename }}"
+                        class="h-auto w-full max-w-full rounded-md shadow-md shadow-gray-200 dark:shadow-gray-800"
+                        width="{{ width }}" height="{{ height }}" {% if is_animation %}loop muted autoplay{% else
+                        %}controls{% endif %}>
+                        Your browser doesn't support HTML5 video tag.
+                    </video>
+                    <meta itemprop="duration" content="{{ duration }}" />
+                    <link itemprop="thumbnailUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
+                    <meta itemprop="allowEmbed" content="true" />
+                    <meta itemprop="content_id" content="{{ id }}" />
+                    <span itemprop="thumbnail" itemscope itemtype="https://schema.org/ImageObject">
+                        <link itemprop="contentUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
+                        <meta itemprop="width" content="{{ thumb_width }}" />
+                        <meta itemprop="height" content="{{ thumb_height }}" />
+                        <meta itemprop="encodingFormat" content="{{ thumb_mime_type }}" />
+                    </span>
+                    {% else %}
+                    <img itemprop="contentUrl" src="/static/{{ filename }}" title="{{ title }}" alt="{{ caption }}"
+                        class="h-auto w-full max-w-full rounded-md shadow-lg shadow-gray-200 dark:shadow-gray-800"
+                        width="{{ width }}" height="{{ height }}" />
+                    <meta itemprop="representativeOfPage" content="true" />
+                    {% endif %}
+                </div>
+                <figcaption itemprop="caption" class="mt-2 text-xl text-center text-gray-800 dark:text-gray-200">
+                    {{ caption }}
+                </figcaption>
+            </figure>
+            <div data-nosnippet class="flex flex-row justify-center">
+                <div class="flex flex-col items-center mb-1">
+                    <a download href="/static/{{ filename }}"
+                        class="max-w-48 inline-flex items-center justify-center px-5 py-3 text-base font-medium text-center text-white bg-blue-700 rounded-md shadow-md hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 dark:focus:ring-blue-900">
+                        <svg class="fill-current w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <path d="M13 8V2H7v6H2l8 8 8-8h-5zM0 18h20v2H0v-2z" />
+                        </svg>
+                        Скачать мем
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="flex flex-col gap-4">
+            <p itemprop="description" class="text-gray-900 dark:text-gray-100">
+                {{ description }}
+            </p>
             {% if let Some(text) = text %}
-            <div>
-                <span data-nosnippet>
-                    <h2 class="font-bold text-gray-900 dark:text-gray-100">
-                        Текст на меме
-                    </h2>
-                </span>
-                <p itemprop="embeddedTextCaption" class="text-gray-900 dark:text-gray-100">
-                    {{ text }}
-                </p>
-            </div>
+            <p itemprop="embeddedTextCaption" class="text-gray-900 dark:text-gray-100">
+                {{ text }}
+            </p>
             {% endif %}
-            <div>
-                <span data-nosnippet>
-                    <h2 class="font-bold text-gray-900 dark:text-gray-100">
-                        Описание содержимого мема
-                    </h2>
-                </span>
-                <p itemprop="description" class="text-gray-900 dark:text-gray-100">
-                    {{ description }}
-                </p>
-            </div>
             <span data-nosnippet>
                 {% if let Some(source) = source %}
                 <h3 itemprop="creditText" class="font-semibold text-gray-800 dark:text-gray-200">Источник
@@ -108,24 +107,14 @@
                 <meta itemprop="creditText" content="Источник мема неизвестен." />
                 {% endif %}
             </span>
-            <div data-nosnippet class="flex flex-col items-center mb-1">
-                <a download href="/static/{{ filename }}"
-                    class="max-w-48 inline-flex items-center justify-center px-5 py-3 text-base font-medium text-center text-white bg-blue-700 rounded-md shadow-md hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 dark:focus:ring-blue-900">
-                    <svg class="fill-current w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                        <path d="M13 8V2H7v6H2l8 8 8-8h-5zM0 18h20v2H0v-2z" />
-                    </svg>
-                    Скачать мем
-                </a>
-            </div>
-            <div data-nosnippet
-                class="mb-4 bg-slate-200 dark:bg-slate-800 rounded-md shadow-md shadow-gray-200 dark:shadow-gray-800">
-                {% include "tgbot.html" %}
-            </div>
         </div>
     </div>
-    <div data-nosnippet="">
-        <h3 class="font-bold text-gray-900 dark:text-gray-100 text-xl">Похожие мемы</h3>
+    <div class="flex mb-4 flex-col gap-2 items-center" data-nosnippet="">
+        <h3 class="font-bold text-gray-900 dark:text-gray-100 text-2xl">Похожие мемы</h3>
         {% include "gallery.html" %}
+    </div>
+    <div data-nosnippet class="w-full mb-4">
+        {% include "tgbot.html" %}
     </div>
     <meta itemprop="width" content="{{ width }}" />
     <meta itemprop="height" content="{{ height }}" />
