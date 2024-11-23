@@ -425,16 +425,15 @@ impl Storage {
                         PrefetchQueryBuilder::default()
                             .query(QdQuery::new_nearest(meme_id as u64))
                             .using("text-dense")
-                            .limit(limit),
+                            .limit(limit / 3 * 2),
                     )
                     .add_prefetch(
                         PrefetchQueryBuilder::default()
                             .query(QdQuery::new_nearest(meme_id as u64))
                             .using("image")
-                            .limit(limit),
+                            .limit(limit / 2),
                     )
                     .query(QdQuery::new_fusion(Fusion::Rrf))
-                    .limit(100)
                     .limit(limit),
             )
             .await?
@@ -491,16 +490,16 @@ impl Storage {
                             PrefetchQueryBuilder::default()
                                 .query(QdQuery::new_nearest(text_embedding.clone()))
                                 .using("text-dense")
-                                .limit(100u32),
+                                .limit(40u32),
                         )
                         .add_prefetch(
                             PrefetchQueryBuilder::default()
                                 .query(QdQuery::new_nearest(text_embedding))
                                 .using("image")
-                                .limit(100u32),
+                                .limit(30u32),
                         )
                         .query(QdQuery::new_fusion(Fusion::Rrf))
-                        .limit(100),
+                        .limit(50),
                 )
                 .await?;
 
