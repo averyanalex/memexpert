@@ -24,8 +24,8 @@ use tokio::time;
 use tracing::*;
 
 use crate::{
-    control::{MemeEditAction, MemeEditCallback},
     ai::{Ai, AiMetadata},
+    control::{MemeEditAction, MemeEditCallback},
     storage::Storage,
 };
 
@@ -238,7 +238,7 @@ async fn handle_message(
                             msg.chat.id,
                             format!(
                                 "https://t.me/c/{}/{}",
-                                -admin_chat_id % 100,
+                                -admin_chat_id % 10_000_000_000,
                                 meme.control_message_id
                             ),
                         )
@@ -395,16 +395,18 @@ async fn handle_inline_query(bot: Bot, query: InlineQuery, db: Storage) -> Resul
         .into_iter()
         .map(|meme| {
             let id = format!("{}:{}:{}", meme.2, meme.1, meme.0.id);
+            let meme_url = format!("https://memexpert.xyz/ru/{}", meme.0.slug);
             match meme.0.media_type {
                 MediaType::Photo => InlineQueryResult::CachedPhoto(
-                    InlineQueryResultCachedPhoto::new(id, meme.0.tg_id),
+                    InlineQueryResultCachedPhoto::new(id, meme.0.tg_id).caption(meme_url),
                 ),
                 MediaType::Video => InlineQueryResult::CachedVideo(
-                    InlineQueryResultCachedVideo::new(id, meme.0.tg_id, meme.0.slug),
+                    InlineQueryResultCachedVideo::new(id, meme.0.tg_id, meme.0.slug)
+                        .caption(meme_url),
                 ),
-                MediaType::Animation => {
-                    InlineQueryResult::CachedGif(InlineQueryResultCachedGif::new(id, meme.0.tg_id))
-                }
+                MediaType::Animation => InlineQueryResult::CachedGif(
+                    InlineQueryResultCachedGif::new(id, meme.0.tg_id).caption(meme_url),
+                ),
             }
         });
     bot.answer_inline_query(query.id, memes)
