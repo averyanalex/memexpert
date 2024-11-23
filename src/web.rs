@@ -4,10 +4,12 @@ use std::{fmt::Write, net::SocketAddr};
 
 use anyhow::{anyhow, Result};
 use askama::Template;
+
 use axum::{
-    body::Body,
-    extract::{Path, State},
+    body::{self, Body},
+    extract::{Path, Request, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
+    middleware,
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Router,
@@ -42,6 +44,7 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
         .route("/", get(index))
         .route("/sitemap.xml", get(sitemap_xml))
         .route("/sitemap.txt", get(sitemap_txt))
+        .layer(middleware::from_fn(minificator))
         .with_state(AppState { db });
 
     let addr = SocketAddr::from_str("0.0.0.0:3000")?;
@@ -49,6 +52,38 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
     info!("listening at {addr}");
 
     Ok(axum::serve(listener, app).await?)
+}
+
+async fn minificator(request: Request, next: middleware::Next) -> Response {
+    let response = next.run(request).await;
+
+    if let Some(content_type) = response.headers().get(header::CONTENT_TYPE)
+        && let Ok(content_type) = content_type.to_str()
+        && content_type.starts_with("text/html")
+    {
+        let (mut res_parts, res_body) = response.into_parts();
+
+        if let Ok(body) = body::to_bytes(res_body, 10_000_000).await {
+            let mut cfg = minify_html::Cfg::spec_compliant();
+            cfg.minify_css = true;
+            cfg.minify_js = true;
+
+            let minified = minify_html::minify(&body, &cfg);
+
+            res_parts.headers.remove(header::TRANSFER_ENCODING);
+            res_parts.headers.remove(header::CONTENT_LENGTH);
+
+            Response::from_parts(res_parts, Body::from(minified))
+        } else {
+            (
+                StatusCode::BAD_GATEWAY,
+                "error reading body for minification",
+            )
+                .into_response()
+        }
+    } else {
+        response
+    }
 }
 
 #[derive(Clone)]
