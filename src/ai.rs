@@ -22,14 +22,6 @@ use serde_json::{from_str, json};
 
 use crate::ensure_ends_with_punctuation;
 
-const COMMON_PROMPT: &str = "The title should be a short, succinct, concise phrase, begin with a capital letter and not end with a period.
-The slug must be a translation of the title into English and consist only of Latin letters and hyphens.
-The subtitle should be a small capitalized sentence without a period that complements the title.
-The description should be long and detailed, describing what is shown in the picture and explaining what the meme is about.
-If the text in the picture is present, you need to correct the capslock (and capitalize the first letter) and divide it into sentences. Add the end of the sentence if there is none.
-The title, subtitle and descriptions must be written in Russian.
-Always use double quotes (\") as quotation marks instead of signle (\').";
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AiMetadata {
     pub title_ru: String,
@@ -78,23 +70,23 @@ fn save_metadata_tool() -> ChatCompletionTool {
             "properties": {
                 "title_ru": {
                     "type": "string",
-                    "description": "Laconic and short title in Russian language."
+                    "description": "A short and meaningful name for the meme in Russian, which will make it easy to find on the Internet. The title must be optimized for search, begin with a capital letter, and not end with a period (question marks and exclamation marks are allowed)."
                 },
                 "slug": {
                     "type": "string",
-                    "description": "Slug. Part of meme's url address."
+                    "description": "Slug. Part of the meme's URL. Usually this is translating the title into English, converting it to lower case and replacing spaces with hyphens. If the title is long enough, use a shortened version for the slug."
                 },
                 "subtitle_ru": {
                     "type": "string",
-                    "description": "Subtitle in Russian language."
+                    "description": "Subtitle in Russian. It will act as an alt tag for the image and a caption. Shouldn't end with a pediod."
                 },
                 "description_ru": {
                     "type": "string",
-                    "description": "Very long and detailed description of the meme in Russian language."
+                    "description": "Very long and detailed description of the meme in Russian. Describe what is depicted on the meme and what its essence is."
                 },
                 "fixed_text": {
                     "type": "string",
-                    "description": "The text in the picture, divided into sentences and with corrected registers."
+                    "description": "The text in the picture, divided into sentences and with corrected case. Add the missing punctuation marks, fix the capslock, but keep the original spelling. Omit this field if there is no text."
                 }
             },
             "required": [
@@ -249,13 +241,13 @@ impl Ai {
 
     pub async fn gen_meme_metadata(&self, image: Vec<u8>) -> Result<AiMetadata> {
         let request = CreateChatCompletionRequestArgs::default()
-            .model("gpt-4o")
+            .model("gpt-4o-2024-11-20")
             .tools(vec![save_metadata_tool()])
             .max_tokens(1024u32)
             .tool_choice(ChatCompletionToolChoiceOption::Required)
             .messages(vec![
                 ChatCompletionRequestAssistantMessageArgs::default()
-                    .content(format!("Analyze provided meme and call function `save_meme_metadata`.\n\n{COMMON_PROMPT}"))
+                    .content("Analyze provided meme and call function `save_meme_metadata`.\nAlways use double quotes (\") as quotation marks instead of signle (\').".to_string())
                     .build()?
                     .into(),
                 ChatCompletionRequestUserMessageArgs::default()
@@ -301,20 +293,20 @@ impl Ai {
         edit_prompt: &str,
     ) -> Result<AiMetadata> {
         let request = CreateChatCompletionRequestArgs::default()
-            .model("gpt-4o")
+            .model("gpt-4o-2024-11-20")
             .tools(vec![save_metadata_tool()])
             .max_tokens(1024u32)
             .tool_choice(ChatCompletionToolChoiceOption::Required)
             .messages(vec![
                 ChatCompletionRequestAssistantMessageArgs::default()
-                    .content(format!("Apply edits from the user to current metadata and update them via function `save_meme_metadata`.\n\n{COMMON_PROMPT}"))
+                    .content("Apply edits from the user to current metadata of privided meme and update them via function `save_meme_metadata`.\nAlways use double quotes (\") as quotation marks instead of signle (\').".to_string())
                     .build()?
                     .into(),
                 ChatCompletionRequestUserMessageArgs::default()
                     .content(ChatCompletionRequestUserMessageContent::Array(vec![
                         image_to_messagepart(image),
-                        text_to_messagepart(format!("User's edits: {edit_prompt}.\n\nCurrent metadata:\nTitle: {}.\nSlug: {}.\nSubtitle: {}.\nDescription: {}.\nText: {}.",
-                        ai_metadata.title_ru, ai_metadata.slug, ai_metadata.subtitle_ru, ai_metadata.description_ru, ai_metadata.fixed_text.unwrap_or_else(|| "none".to_string()))),
+                        text_to_messagepart(format!("User's edits: ```{edit_prompt}```\n\nCurrent metadata:\n```{}```",
+                        serde_json::to_string(&ai_metadata)?)),
                     ]))
                     .build()?
                     .into(),
