@@ -31,7 +31,7 @@ use qdrant_client::{
 use teloxide::{net::Download, requests::Requester, types::Message};
 
 use crate::bot::Bot;
-use crate::{control::refresh_meme_control_msg, ai::Ai};
+use crate::{ai::Ai, control::refresh_meme_control_msg};
 
 #[derive(FromQueryResult)]
 struct TgUseOnlyMemeId {
@@ -139,7 +139,7 @@ impl Storage {
 
             let (text_embed, image_embed) = self
                 .openai
-                .gen_meme_embedding(meme, thumb, translations)
+                .gen_meme_embedding(meme, &thumb, translations)
                 .await?;
 
             self.qd

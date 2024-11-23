@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use anyhow::{Context, Result};
 use async_openai::{
     config::OpenAIConfig,
@@ -12,6 +14,7 @@ use async_openai::{
 };
 use base64::prelude::*;
 use entities::{memes, translations};
+use image::{codecs::jpeg::JpegEncoder, ImageReader};
 use itertools::Itertools;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -183,7 +186,7 @@ impl Ai {
     pub async fn gen_meme_embedding(
         &self,
         meme: &memes::Model,
-        thumb: Vec<u8>,
+        thumb: &[u8],
         translations: &[translations::Model],
     ) -> Result<(Vec<f32>, Vec<f32>)> {
         let translation = translations.first().context("no translations")?;
@@ -200,6 +203,18 @@ impl Ai {
             text += text_on_meme;
         }
 
+        let mut img = ImageReader::new(Cursor::new(thumb))
+            .with_guessed_format()?
+            .decode()?;
+
+        if img.width() > 512 || img.height() > 512 {
+            img = img.resize(512, 512, image::imageops::Lanczos3);
+        }
+
+        let mut img_bytes = Vec::new();
+        let encoder = JpegEncoder::new_with_quality(&mut img_bytes, 90);
+        img.write_with_encoder(encoder)?;
+
         let req = json!({
             "model": "jina-clip-v2",
             "dimensions": 1024,
@@ -210,7 +225,7 @@ impl Ai {
                     "text": text,
                 },
                 {
-                    "image": BASE64_STANDARD.encode(thumb)
+                    "image": BASE64_STANDARD.encode(img_bytes)
                 }
             ],
         });
