@@ -82,7 +82,7 @@ fn save_metadata_tool() -> ChatCompletionTool {
                 },
                 "description_ru": {
                     "type": "string",
-                    "description": "A very long and detailed description of the meme in Russian. Describe what is depicted on the meme and what its meaning is. Try not to overcomplicate the description and write it in simple words. The description should also be optimized for search and search engines."
+                    "description": "A very long and detailed description of the meme in Russian. Describe what is depicted on the meme and what its meaning is. Старайся не переусложнять описание и писать более простыми словами. Старайся не использовать сложные обороты, такие как \"этот мем символизирует\", \"подчёркивает комическую ситуацию\" и другие. The description should also be optimized for search and search engines."
                 },
                 "text": {
                     "type": "string",
