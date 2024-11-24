@@ -10,7 +10,7 @@ use entities::{
     translations,
 };
 use itertools::Itertools;
-use sea_orm::{ActiveModelBehavior, ActiveValue, IntoActiveModel};
+use sea_orm::{ActiveModelBehavior, ActiveValue};
 use teloxide::{
     adaptors::throttle::Limits,
     prelude::*,
@@ -20,7 +20,6 @@ use teloxide::{
         KeyboardButton, KeyboardMarkup, KeyboardRemove, PhotoSize,
     },
 };
-use tokio::time;
 use tracing::*;
 
 use crate::{
@@ -179,52 +178,6 @@ async fn handle_message(
                 bot.send_message(msg.chat.id, "Control messages refresh completed")
                     .await?;
                 return Ok(());
-            } else if text.starts_with("/regen") {
-                if let [_, start, stop] = text.split_whitespace().collect::<Vec<_>>()[..] {
-                    let updated_by = user.0.try_into()?;
-                    let start: i32 = start.parse()?;
-                    let stop: i32 = stop.parse()?;
-                    let mut interval = time::interval(time::Duration::from_secs(20));
-
-                    for (meme, translations) in db.all_memes_with_translations().await? {
-                        if (start..stop).contains(&meme.id) {
-                            interval.tick().await;
-
-                            let ai_meta = openai
-                                .gen_meme_metadata(
-                                    db.load_tg_file(
-                                        &meme.thumb_tg_id,
-                                        meme.thumb_content_length.try_into()?,
-                                    )
-                                    .await?,
-                                )
-                                .await?;
-                            let mut meme = meme.into_active_model();
-                            meme.text = ActiveValue::set(ai_meta.fixed_text);
-                            meme.slug = ActiveValue::set(ai_meta.slug);
-
-                            let translation_updates = translations
-                                .into_iter()
-                                .filter(|t| t.language == "ru")
-                                .map(|t| {
-                                    let mut translation = t.into_active_model();
-                                    translation.title = ActiveValue::set(ai_meta.title_ru.clone());
-                                    translation.caption =
-                                        ActiveValue::set(ai_meta.subtitle_ru.clone());
-                                    translation.description =
-                                        ActiveValue::set(ai_meta.description_ru.clone());
-                                    translation
-                                })
-                                .collect();
-
-                            db.update_meme(meme, translation_updates, updated_by)
-                                .await?;
-                        }
-                    }
-
-                    bot.send_message(msg.chat.id, "Regen completed").await?;
-                    return Ok(());
-                }
             }
         }
 
