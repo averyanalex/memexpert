@@ -11,9 +11,9 @@ use tokio::signal;
 use tracing::*;
 use tracing_subscriber::prelude::*;
 
+mod ai;
 mod bot;
 mod control;
-mod ai;
 mod storage;
 mod web;
 

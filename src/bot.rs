@@ -214,6 +214,7 @@ async fn handle_message(
                         translation.language = ActiveValue::set("ru".to_owned());
 
                         ai_meta.apply(&mut meme, &mut translation);
+                        meme.publish_status = ActiveValue::set(PublishStatus::Published);
 
                         let control_msg = db.create_meme(meme.clone(), translation.clone()).await?;
                         let control_msg_url = control_msg.url().context("can't create url")?;
