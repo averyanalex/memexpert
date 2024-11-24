@@ -28,7 +28,7 @@ pub struct AiMetadata {
     pub slug: String,
     pub subtitle_ru: String,
     pub description_ru: String,
-    pub fixed_text: Option<String>,
+    pub text: Option<String>,
 }
 
 impl AiMetadata {
@@ -41,12 +41,12 @@ impl AiMetadata {
             slug: meme.slug,
             subtitle_ru: ru_translation.caption,
             description_ru: ru_translation.description,
-            fixed_text: meme.text,
+            text: meme.text,
         }
     }
 
     pub fn apply(self, meme: &mut memes::ActiveModel, translation: &mut translations::ActiveModel) {
-        meme.text = ActiveValue::set(self.fixed_text);
+        meme.text = ActiveValue::set(self.text);
         meme.slug = ActiveValue::set(self.slug);
 
         translation.title = ActiveValue::set(self.title_ru);
@@ -82,11 +82,11 @@ fn save_metadata_tool() -> ChatCompletionTool {
                 },
                 "description_ru": {
                     "type": "string",
-                    "description": "Very long and detailed description of the meme in Russian. Describe what is depicted on the meme and what its essence is."
+                    "description": "A very long and detailed description of the meme in Russian. Describe what is depicted on the meme and what its meaning is. Try not to overcomplicate the description and write it in simple words. The description should also be optimized for search and search engines."
                 },
-                "fixed_text": {
+                "text": {
                     "type": "string",
-                    "description": "The text in the picture, divided into sentences and with corrected case. Add the missing punctuation marks, fix the capslock, but keep the original spelling. Omit this field if there is no text."
+                    "description": "All text available on the image. Should be split into sentences and capslock fixed. Spelling errors do not need to be corrected. Omit this field if there is no text."
                 }
             },
             "required": [
