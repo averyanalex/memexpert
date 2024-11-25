@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use askama::Template;
 
 use axum::{
-    body::{self, Body},
+    body::Body,
     extract::{Path, Request, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     middleware,
@@ -55,35 +55,35 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
 }
 
 async fn minificator(request: Request, next: middleware::Next) -> Response {
-    let response = next.run(request).await;
+    next.run(request).await
 
-    if let Some(content_type) = response.headers().get(header::CONTENT_TYPE)
-        && let Ok(content_type) = content_type.to_str()
-        && content_type.starts_with("text/html")
-    {
-        let (mut res_parts, res_body) = response.into_parts();
+    // if let Some(content_type) = response.headers().get(header::CONTENT_TYPE)
+    //     && let Ok(content_type) = content_type.to_str()
+    //     && content_type.starts_with("text/html")
+    // {
+    //     let (mut res_parts, res_body) = response.into_parts();
 
-        if let Ok(body) = body::to_bytes(res_body, 10_000_000).await {
-            let mut cfg = minify_html::Cfg::spec_compliant();
-            cfg.minify_css = true;
-            cfg.minify_js = true;
+    //     if let Ok(body) = body::to_bytes(res_body, 10_000_000).await {
+    //         let mut cfg = minify_html::Cfg::spec_compliant();
+    //         cfg.minify_css = true;
+    //         cfg.minify_js = true;
 
-            let minified = minify_html::minify(&body, &cfg);
+    //         let minified = minify_html::minify(&body, &cfg);
 
-            res_parts.headers.remove(header::TRANSFER_ENCODING);
-            res_parts.headers.remove(header::CONTENT_LENGTH);
+    //         res_parts.headers.remove(header::TRANSFER_ENCODING);
+    //         res_parts.headers.remove(header::CONTENT_LENGTH);
 
-            Response::from_parts(res_parts, Body::from(minified))
-        } else {
-            (
-                StatusCode::BAD_GATEWAY,
-                "error reading body for minification",
-            )
-                .into_response()
-        }
-    } else {
-        response
-    }
+    //         Response::from_parts(res_parts, Body::from(minified))
+    //     } else {
+    //         (
+    //             StatusCode::BAD_GATEWAY,
+    //             "error reading body for minification",
+    //         )
+    //             .into_response()
+    //     }
+    // } else {
+    //     response
+    // }
 }
 
 #[derive(Clone)]
