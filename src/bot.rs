@@ -17,7 +17,7 @@ use teloxide::{
     types::{
         ChatAction, FileMeta, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
         InlineQueryResultCachedGif, InlineQueryResultCachedPhoto, InlineQueryResultCachedVideo,
-        KeyboardButton, KeyboardMarkup, KeyboardRemove, MessageId, PhotoSize,
+        KeyboardButton, KeyboardMarkup, KeyboardRemove, MessageId, PhotoSize, ReplyParameters,
     },
 };
 use tracing::*;
@@ -185,7 +185,9 @@ async fn finish_meme_creation(
     ai_meta.apply(&mut data.meme, &mut translation);
     data.meme.publish_status = ActiveValue::set(PublishStatus::Published);
 
-    let control_msg = db.create_meme(data.meme, translation, data.img_embedding).await?;
+    let control_msg = db
+        .create_meme(data.meme, translation, data.img_embedding)
+        .await?;
     let control_msg_url = control_msg.url().context("can't create url")?;
 
     bot.send_message(data.msg.chat.id, format!("Мем создан!\n{control_msg_url}"))
@@ -242,6 +244,7 @@ async fn process_meme_creation(
                             found_meme.control_message_id
                         ),
                     )
+                    .reply_parameters(ReplyParameters::new(msg.id))
                     .reply_markup(InlineKeyboardMarkup::new([vec![
                         InlineKeyboardButton::callback("Создать", "confirm"),
                     ]]))
