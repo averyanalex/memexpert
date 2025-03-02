@@ -70,30 +70,30 @@ fn save_metadata_tool() -> ChatCompletionTool {
             "properties": {
                 "title_ru": {
                     "type": "string",
-                    "description": "A short and meaningful name for the meme in Russian, which will make it easy to find on the Internet. The title must be optimized for search, begin with a capital letter, and not end with a period (question marks and exclamation marks are allowed)."
+                    "description": include_str!("../prompts/metadata/title.txt"),
                 },
                 "slug": {
                     "type": "string",
-                    "description": "Slug. Part of the meme's URL. Usually this is translating the title into English, converting it to lower case and replacing spaces with hyphens. If the title is long enough, use a shortened version for the slug."
+                    "description": include_str!("../prompts/metadata/slug.txt"),
                 },
                 "subtitle_ru": {
                     "type": "string",
-                    "description": "Subtitle in Russian. It will act as an alt tag for the image and a caption. Shouldn't end with a pediod."
+                    "description": include_str!("../prompts/metadata/subtitle.txt"),
                 },
                 "description_ru": {
                     "type": "string",
-                    "description": "A very long and detailed description of the meme in Russian. Describe what is depicted on the meme and what its meaning is. Старайся не переусложнять описание и писать более простыми словами. Старайся не использовать сложные обороты, такие как \"этот мем символизирует\", \"подчёркивает комическую ситуацию\" и другие. The description should also be optimized for search and search engines."
+                    "description": include_str!("../prompts/metadata/description.txt"),
                 },
                 "text": {
                     "type": "string",
-                    "description": "All text available on the image. Should be split into sentences and capslock fixed. Spelling errors do not need to be corrected. Omit this field if there is no text."
+                    "description": include_str!("../prompts/metadata/text.txt"),
                 }
             },
             "required": [
                 "title_ru",
                 "slug",
                 "subtitle_ru",
-                "description_ru"
+                "description_ru",
             ],
             "additionalProperties": false,
         })),
@@ -175,12 +175,50 @@ impl Ai {
             .context("can't get result")
     }
 
-    pub async fn gen_meme_embedding(
-        &self,
+    async fn jina_clip(&self, input: serde_json::Value) -> Result<Vec<Vec<f32>>> {
+        let req = json!({
+            "model": "jina-clip-v2",
+            "dimensions": 1024,
+            "normalized": true,
+            "embedding_type": "float",
+            "input": input,
+        });
+
+        let res: JinaAiResponse = self
+            .http
+            .post("https://api.jina.ai/v1/embeddings")
+            .json(&req)
+            .bearer_auth(&self.jina_token)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        Ok(res.data.into_iter().map(|e| e.embedding).collect())
+    }
+
+    fn image_for_clip(thumb: &[u8]) -> Result<serde_json::Value> {
+        let mut img = ImageReader::new(Cursor::new(thumb))
+            .with_guessed_format()?
+            .decode()?;
+
+        if img.width() > 512 || img.height() > 512 {
+            img = img.resize(512, 512, image::imageops::Lanczos3);
+        }
+
+        let mut img_bytes = Vec::new();
+        let encoder = JpegEncoder::new_with_quality(&mut img_bytes, 90);
+        img.write_with_encoder(encoder)?;
+
+        Ok(json!({
+            "image": BASE64_STANDARD.encode(img_bytes)
+        }))
+    }
+
+    fn text_for_clip(
         meme: &memes::Model,
-        thumb: &[u8],
         translations: &[translations::Model],
-    ) -> Result<(Vec<f32>, Vec<f32>)> {
+    ) -> Result<serde_json::Value> {
         let translation = translations.first().context("no translations")?;
 
         let mut text = format!(
@@ -195,48 +233,45 @@ impl Ai {
             text += text_on_meme;
         }
 
-        let mut img = ImageReader::new(Cursor::new(thumb))
-            .with_guessed_format()?
-            .decode()?;
+        Ok(json!({
+            "text": text,
+        }))
+    }
 
-        if img.width() > 512 || img.height() > 512 {
-            img = img.resize(512, 512, image::imageops::Lanczos3);
-        }
+    pub async fn gen_meme_embedding(
+        &self,
+        meme: &memes::Model,
+        thumb: &[u8],
+        translations: &[translations::Model],
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        self.jina_clip(json!([
+            Self::text_for_clip(meme, translations)?,
+            Self::image_for_clip(thumb)?,
+        ]))
+        .await?
+        .into_iter()
+        .collect_tuple()
+        .context("can't build 2-element tuple")
+    }
 
-        let mut img_bytes = Vec::new();
-        let encoder = JpegEncoder::new_with_quality(&mut img_bytes, 90);
-        img.write_with_encoder(encoder)?;
-
-        let req = json!({
-            "model": "jina-clip-v2",
-            "dimensions": 1024,
-            "normalized": true,
-            "embedding_type": "float",
-            "input": [
-                {
-                    "text": text,
-                },
-                {
-                    "image": BASE64_STANDARD.encode(img_bytes)
-                }
-            ],
-        });
-
-        let res: JinaAiResponse = self
-            .http
-            .post("https://api.jina.ai/v1/embeddings")
-            .json(&req)
-            .bearer_auth(&self.jina_token)
-            .send()
+    pub async fn get_image_embedding(&self, image: &[u8]) -> Result<Vec<f32>> {
+        self.jina_clip(json!([Self::image_for_clip(image)?]))
             .await?
-            .json()
-            .await?;
-
-        res.data
             .into_iter()
-            .map(|e| e.embedding)
-            .collect_tuple()
-            .context("can't build 2-element tuple")
+            .next()
+            .context("no data")
+    }
+
+    pub async fn get_meme_text_embedding(
+        &self,
+        meme: &memes::Model,
+        translations: &[translations::Model],
+    ) -> Result<Vec<f32>> {
+        self.jina_clip(json!([Self::text_for_clip(meme, translations)?]))
+            .await?
+            .into_iter()
+            .next()
+            .context("no data")
     }
 
     pub async fn gen_meme_metadata(&self, image: Vec<u8>) -> Result<AiMetadata> {
@@ -299,7 +334,7 @@ impl Ai {
             .tool_choice(ChatCompletionToolChoiceOption::Required)
             .messages(vec![
                 ChatCompletionRequestAssistantMessageArgs::default()
-                    .content("Apply edits from the user to current metadata of privided meme and update them via function `save_meme_metadata`.\nAlways use double quotes (\") as quotation marks instead of signle (\').".to_string())
+                    .content("Apply edits from the user to current metadata of provided meme and update them via function `save_meme_metadata`.\nAlways use double quotes (\") as quotation marks instead of signle (\').".to_string())
                     .build()?
                     .into(),
                 ChatCompletionRequestUserMessageArgs::default()

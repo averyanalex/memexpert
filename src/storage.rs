@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use chrono::Utc;
 use itertools::Itertools;
 use tokio::time;
@@ -43,7 +43,7 @@ pub struct Storage {
     dc: DatabaseConnection,
     qd: Arc<Qdrant>,
     bot: Bot,
-    openai: Arc<Ai>,
+    ai: Arc<Ai>,
 }
 
 impl Storage {
@@ -63,7 +63,7 @@ impl Storage {
             dc,
             qd,
             bot,
-            openai,
+            ai: openai,
         };
         storage.create_indexes().await?;
 
@@ -103,7 +103,7 @@ impl Storage {
             .await?
         {
             time::sleep(time::Duration::from_millis(100)).await;
-            self.update_meme_in_qd(&meme, &translations).await?;
+            self.update_meme_in_qd(&meme, &translations, None).await?;
         }
 
         Ok(())
@@ -131,16 +131,23 @@ impl Storage {
         &self,
         meme: &memes::Model,
         translations: &[translations::Model],
+        img_embedding: Option<Vec<f32>>,
     ) -> Result<()> {
         if meme.publish_status == PublishStatus::Published {
             let thumb = self
                 .load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
                 .await?;
 
-            let (text_embed, image_embed) = self
-                .openai
-                .gen_meme_embedding(meme, &thumb, translations)
-                .await?;
+            let (text_embed, image_embed) = if let Some(image_embed) = img_embedding {
+                (
+                    self.ai.get_meme_text_embedding(meme, translations).await?,
+                    image_embed,
+                )
+            } else {
+                self.ai
+                    .gen_meme_embedding(meme, &thumb, translations)
+                    .await?
+            };
 
             self.qd
                 .upsert_points(
@@ -180,6 +187,7 @@ impl Storage {
         &self,
         trans: DatabaseTransaction,
         meme_id: i32,
+        img_embedding: Option<Vec<f32>>,
     ) -> Result<Option<Message>> {
         // Load final meme version
         let (meme, translations) = Memes::find_by_id(meme_id)
@@ -201,7 +209,8 @@ impl Storage {
             .save(&trans)
             .await?;
         }
-        self.update_meme_in_qd(&meme, &translations).await?;
+        self.update_meme_in_qd(&meme, &translations, img_embedding)
+            .await?;
 
         self.load_tg_file(&meme.tg_id, meme.content_length.try_into()?)
             .await?;
@@ -261,9 +270,47 @@ impl Storage {
             translation.save(&trans).await?;
         }
 
-        self.commit_meme_edition(trans, meme_id).await?;
+        self.commit_meme_edition(trans, meme_id, None).await?;
 
         Ok(())
+    }
+
+    pub async fn find_similar_image(&self, embedding: Vec<f32>) -> Result<Option<memes::Model>> {
+        Ok(
+            if let Some(point) = self
+                .qd
+                .query(
+                    QueryPointsBuilder::new("memexpert")
+                        .query(qdrant_client::qdrant::Query::new_nearest(embedding))
+                        .using("image")
+                        .limit(1),
+                )
+                .await?
+                .result
+                .into_iter()
+                .next()
+            {
+                if point.score >= 0.99 {
+                    let PointIdOptions::Num(id) = point
+                        .id
+                        .context("no id")?
+                        .point_id_options
+                        .context("no id options")?
+                    else {
+                        bail!("id is not num");
+                    };
+                    let meme = Memes::find_by_id(id as i32)
+                        .one(&self.dc)
+                        .await?
+                        .context("meme not found")?;
+                    Some(meme)
+                } else {
+                    None
+                }
+            } else {
+                None
+            },
+        )
     }
 
     /// Create meme with translation
@@ -271,6 +318,7 @@ impl Storage {
         &self,
         mut meme: memes::ActiveModel,
         mut translation: translations::ActiveModel,
+        img_embedding: Vec<f32>,
     ) -> Result<Message> {
         let trans = self.dc.begin().await?;
 
@@ -286,7 +334,7 @@ impl Storage {
         Translations::insert(translation).exec(&trans).await?;
 
         let control_msg = self
-            .commit_meme_edition(trans, meme.id)
+            .commit_meme_edition(trans, meme.id, Some(img_embedding))
             .await?
             .context("must create control message")?;
 
@@ -480,7 +528,7 @@ impl Storage {
                 .take(50)
                 .collect()
         } else {
-            let text_embedding = self.openai.text_embedding(query).await?;
+            let text_embedding = self.ai.text_embedding(query).await?;
 
             let qd_results = self
                 .qd
