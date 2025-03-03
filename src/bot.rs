@@ -173,7 +173,7 @@ async fn finish_meme_creation(
     data.meme.last_edited_by = ActiveValue::set(data.msg.chat.id.0);
 
     let ai_meta = openai
-        .gen_meme_metadata(
+        .gen_new_meme_metadata(
             db.load_tg_file(&data.thumb_file_id, data.thumb_file_size)
                 .await?,
         )
@@ -304,7 +304,7 @@ async fn process_meme_edition(
                 )
                 .await?;
             let new_metadata = openai
-                .edit_meme_metadata(
+                .generate_edited_meme_metadata(
                     AiMetadata::from_meme_with_translation(current_meme_ver, ru_translation),
                     thumb,
                     prompt,

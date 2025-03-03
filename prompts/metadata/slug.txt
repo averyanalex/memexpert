@@ -1,4 +1,0 @@
-Слаг.
-Часть URL-адреса мема.
-Usually this is translating the title into English, converting it to lower case and replacing spaces with hyphens.
-If the title is long enough, use a shortened version for the slug.

@@ -4,11 +4,12 @@ use anyhow::{Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessageContentPartImage,
-        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestUserMessageArgs,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
         ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
-        ChatCompletionTool, ChatCompletionToolChoiceOption, ChatCompletionToolType,
-        CreateChatCompletionRequestArgs, FunctionObject, ImageDetail, ImageUrl,
+        ChatCompletionToolChoiceOption, CreateChatCompletionRequestArgs, ImageDetail, ImageUrl,
+        ResponseFormat, ResponseFormatJsonSchema,
     },
     Client,
 };
@@ -19,16 +20,17 @@ use itertools::Itertools;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, json};
+use tracing::info;
 
 use crate::ensure_ends_with_punctuation;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AiMetadata {
-    pub title_ru: String,
+    pub title: String,
     pub slug: String,
-    pub subtitle_ru: String,
-    pub description_ru: String,
-    pub text: Option<String>,
+    pub subtitle: String,
+    pub description: String,
+    pub text_on_meme: Option<String>,
 }
 
 impl AiMetadata {
@@ -37,21 +39,21 @@ impl AiMetadata {
         ru_translation: translations::Model,
     ) -> Self {
         Self {
-            title_ru: ru_translation.title,
+            title: ru_translation.title,
             slug: meme.slug,
-            subtitle_ru: ru_translation.caption,
-            description_ru: ru_translation.description,
-            text: meme.text,
+            subtitle: ru_translation.caption,
+            description: ru_translation.description,
+            text_on_meme: meme.text,
         }
     }
 
     pub fn apply(self, meme: &mut memes::ActiveModel, translation: &mut translations::ActiveModel) {
-        meme.text = ActiveValue::set(self.text);
+        meme.text = ActiveValue::set(self.text_on_meme);
         meme.slug = ActiveValue::set(self.slug);
 
-        translation.title = ActiveValue::set(self.title_ru);
-        translation.caption = ActiveValue::set(self.subtitle_ru);
-        translation.description = ActiveValue::set(self.description_ru);
+        translation.title = ActiveValue::set(self.title);
+        translation.caption = ActiveValue::set(self.subtitle);
+        translation.description = ActiveValue::set(self.description);
     }
 }
 
@@ -61,49 +63,46 @@ pub struct Ai {
     jina_token: String,
 }
 
-fn save_metadata_tool() -> ChatCompletionTool {
-    let save_func = FunctionObject {
-        name: "save_meme_metadata".into(),
-        description: Some("Save meme metadata".into()),
-        parameters: Some(json!({
-            "type": "object",
-            "properties": {
-                "title_ru": {
-                    "type": "string",
-                    "description": include_str!("../prompts/metadata/title.txt"),
+fn response_format() -> ResponseFormat {
+    ResponseFormat::JsonSchema {
+        json_schema: ResponseFormatJsonSchema {
+            description: Some("The content of the meme's web page".to_string()),
+            name: "meme_info".to_string(),
+            schema: Some(json!({
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "The title of the meme."
+                },
+                "subtitle": {
+                  "type": "string",
+                  "description": "The subtitle of the meme, also used as the alt tag."
                 },
                 "slug": {
-                    "type": "string",
-                    "description": include_str!("../prompts/metadata/slug.txt"),
+                  "type": "string",
+                  "description": "Slug in the URL."
                 },
-                "subtitle_ru": {
-                    "type": "string",
-                    "description": include_str!("../prompts/metadata/subtitle.txt"),
+                "description": {
+                  "type": "string",
+                  "description": "Detailed description of the meme."
                 },
-                "description_ru": {
-                    "type": "string",
-                    "description": include_str!("../prompts/metadata/description.txt"),
-                },
-                "text": {
-                    "type": "string",
-                    "description": include_str!("../prompts/metadata/text.txt"),
+                "text_on_meme": {
+                  "type": ["string", "null"],
+                  "description": "The text displayed on the meme image. Null if missing."
                 }
-            },
-            "required": [
-                "title_ru",
+              },
+              "required": [
+                "title",
+                "subtitle",
                 "slug",
-                "subtitle_ru",
-                "description_ru",
-            ],
-            "additionalProperties": false,
-        })),
-
-        strict: Some(false),
-    };
-
-    ChatCompletionTool {
-        r#type: ChatCompletionToolType::Function,
-        function: save_func,
+                "description",
+                "text_on_meme"
+              ],
+              "additionalProperties": false
+            })),
+            strict: Some(true),
+        },
     }
 }
 
@@ -274,104 +273,72 @@ impl Ai {
             .context("no data")
     }
 
-    pub async fn gen_meme_metadata(&self, image: Vec<u8>) -> Result<AiMetadata> {
+    async fn generate_ai_metadata(
+        &self,
+        messages: Vec<ChatCompletionRequestMessage>,
+    ) -> Result<AiMetadata> {
         let request = CreateChatCompletionRequestArgs::default()
             .model("gpt-4o-2024-11-20")
-            .tools(vec![save_metadata_tool()])
             .max_tokens(1024u32)
-            .tool_choice(ChatCompletionToolChoiceOption::Required)
-            .messages(vec![
-                ChatCompletionRequestAssistantMessageArgs::default()
-                    .content("Analyze provided meme and call function `save_meme_metadata`.\nAlways use double quotes (\") as quotation marks instead of signle (\').".to_string())
-                    .build()?
-                    .into(),
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(ChatCompletionRequestUserMessageContent::Array(vec![
-                        image_to_messagepart(image),
-                    ]))
-                    .build()?
-                    .into(),
-            ])
+            .response_format(response_format())
+            .messages(messages)
             .build()?;
 
-        let try_get_meta = async || {
-            let response = self.client.chat().create(request.clone()).await?;
-            let chat_choice = response.choices.into_iter().next().context("no choices")?;
-            let tool_use = chat_choice
-                .message
-                .tool_calls
-                .context("no tool calls")?
-                .into_iter()
-                .next()
-                .context("no tool calls")?;
-            let metadata: AiMetadata = from_str(&tool_use.function.arguments)?;
-            Ok::<_, anyhow::Error>(metadata)
-        };
-
-        let mut last_error = None;
-        for _ in 0..3 {
-            let res = try_get_meta().await;
-            if let Ok(metadata) = res {
-                return Ok(metadata);
-            } else if let Err(err) = res {
-                last_error = Some(err);
-            }
-        }
-
-        Err(last_error.unwrap())
+        let response = self.client.chat().create(request).await?;
+        let usage = response.usage.context("no usage")?;
+        info!(
+            "done generating metadata, usage: {} in, {} out",
+            usage.prompt_tokens, usage.completion_tokens
+        );
+        let message = response
+            .choices
+            .into_iter()
+            .next()
+            .context("no choices")?
+            .message
+            .content
+            .context("no message")?;
+        Ok(from_str(&message)?)
     }
 
-    pub async fn edit_meme_metadata(
+    pub async fn gen_new_meme_metadata(&self, image: Vec<u8>) -> Result<AiMetadata> {
+        self.generate_ai_metadata(vec![
+            ChatCompletionRequestSystemMessageArgs::default()
+                .content(include_str!("../prompts/meta.md"))
+                .build()?
+                .into(),
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(ChatCompletionRequestUserMessageContent::Array(vec![
+                    image_to_messagepart(image),
+                ]))
+                .build()?
+                .into(),
+        ])
+        .await
+    }
+
+    pub async fn generate_edited_meme_metadata(
         &self,
         ai_metadata: AiMetadata,
         image: Vec<u8>,
         edit_prompt: &str,
     ) -> Result<AiMetadata> {
-        let request = CreateChatCompletionRequestArgs::default()
-            .model("gpt-4o-2024-11-20")
-            .tools(vec![save_metadata_tool()])
-            .max_tokens(1024u32)
-            .tool_choice(ChatCompletionToolChoiceOption::Required)
-            .messages(vec![
-                ChatCompletionRequestAssistantMessageArgs::default()
-                    .content("Apply edits from the user to current metadata of provided meme and update them via function `save_meme_metadata`.\nAlways use double quotes (\") as quotation marks instead of signle (\').".to_string())
-                    .build()?
-                    .into(),
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(ChatCompletionRequestUserMessageContent::Array(vec![
-                        image_to_messagepart(image),
-                        text_to_messagepart(format!("User's edits: ```{edit_prompt}```\n\nCurrent metadata:\n```{}```",
-                        serde_json::to_string(&ai_metadata)?)),
-                    ]))
-                    .build()?
-                    .into(),
-            ])
-            .build()?;
-
-        let try_get_meta = async || {
-            let response = self.client.chat().create(request.clone()).await?;
-            let chat_choice = response.choices.into_iter().next().context("no choices")?;
-            let tool_use = chat_choice
-                .message
-                .tool_calls
-                .context("no tool calls")?
-                .into_iter()
-                .next()
-                .context("no tool calls")?;
-            let metadata: AiMetadata = from_str(&tool_use.function.arguments)?;
-            Ok::<_, anyhow::Error>(metadata)
-        };
-
-        let mut last_error = None;
-        for _ in 0..3 {
-            let res = try_get_meta().await;
-            if let Ok(metadata) = res {
-                return Ok(metadata);
-            } else if let Err(err) = res {
-                last_error = Some(err);
-            }
-        }
-
-        Err(last_error.unwrap())
+        self.generate_ai_metadata(vec![
+            ChatCompletionRequestSystemMessageArgs::default()
+                .content(include_str!("../prompts/meta.md"))
+                .build()?
+                .into(),
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(ChatCompletionRequestUserMessageContent::Array(vec![
+                    image_to_messagepart(image),
+                    text_to_messagepart(format!(
+                        "Update existing page content according to the user feedback: ```{edit_prompt}```\n\nCurrent content:\n```{}```",
+                        serde_json::to_string(&ai_metadata)?
+                    )),
+                ]))
+                .build()?
+                .into(),
+        ])
+        .await
     }
 }
