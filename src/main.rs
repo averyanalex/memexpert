@@ -75,14 +75,24 @@ fn main() -> Result<()> {
         .block_on(_main())
 }
 
+pub struct AppState_ {
+    bot: bot::Bot,
+    ai: Arc<ai::Ai>,
+    storage: storage::Storage,
+}
+
+pub type AppState = Arc<AppState_>;
+
 async fn _main() -> Result<()> {
     let bot = bot::new_bot();
-    let openai = Arc::new(ai::Ai::new());
-    let storage = Storage::new(bot.clone(), openai.clone()).await?;
+    let ai = Arc::new(ai::Ai::new());
+    let storage = Storage::new(bot.clone(), ai.clone()).await?;
+
+    let app_state = Arc::new(AppState_ { bot, ai, storage });
 
     tokio::select! {
-        bot_res = bot::run_bot(storage.clone(), openai, bot) => bot_res,
-        web_res = web::run_webserver(storage) => web_res,
+        bot_res = bot::run_bot(app_state.clone()) => bot_res,
+        web_res = web::run_webserver(app_state) => web_res,
         _ = signal::ctrl_c() => Ok(())
     }
 }

@@ -109,13 +109,13 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn refresh_all_control_messages(&self, bot: &Bot) -> Result<()> {
+    pub async fn refresh_all_control_messages(&self) -> Result<()> {
         for (meme, translations) in Memes::find()
             .find_with_related(Translations)
             .all(&self.dc)
             .await?
         {
-            if let Some(new_msg) = refresh_meme_control_msg(bot, &meme, &translations).await? {
+            if let Some(new_msg) = refresh_meme_control_msg(&self.bot, &meme, &translations).await? {
                 let mut active = meme.into_active_model();
                 active.control_message_id = ActiveValue::set(new_msg.id.0);
                 active.save(&self.dc).await?;

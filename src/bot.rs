@@ -23,9 +23,9 @@ use teloxide::{
 use tracing::*;
 
 use crate::{
-    ai::{Ai, AiMetadata},
+    ai::AiMetadata,
     control::{MemeEditAction, MemeEditCallback},
-    storage::Storage,
+    AppState,
 };
 
 pub type Bot = teloxide::adaptors::Throttle<teloxide::adaptors::CacheMe<teloxide::Bot>>;
@@ -36,7 +36,7 @@ pub fn new_bot() -> Bot {
         .throttle(Limits::default())
 }
 
-pub async fn run_bot(db: Storage, openai: Arc<Ai>, bot: Bot) -> Result<()> {
+pub async fn run_bot(app_state: AppState) -> Result<()> {
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(handle_message))
         .branch(Update::filter_callback_query().endpoint(handle_callback_query))
@@ -46,15 +46,14 @@ pub async fn run_bot(db: Storage, openai: Arc<Ai>, bot: Bot) -> Result<()> {
         )
         .branch(Update::filter_inline_query().branch(dptree::endpoint(handle_inline_query)));
 
-    let states = StateStorage::default();
-    let confirmations = CreationConfirmations::default();
+    let bot_state = BotState::default();
 
-    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .dependencies(dptree::deps![db.clone(), states, openai, confirmations])
+    let mut dispatcher = Dispatcher::builder(app_state.bot.clone(), handler)
+        .dependencies(dptree::deps![app_state.clone(), bot_state])
         .enable_ctrlc_handler()
         .build();
 
-    let me = bot.get_me().await?;
+    let me = app_state.bot.get_me().await?;
     info!("running bot as @{}", me.username());
 
     dispatcher.dispatch().await;
@@ -62,11 +61,8 @@ pub async fn run_bot(db: Storage, openai: Arc<Ai>, bot: Bot) -> Result<()> {
     Ok(())
 }
 
-type StateStorage = Arc<Mutex<HashMap<UserId, State>>>;
-
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Default)]
-enum State {
+enum ChatState {
     #[default]
     Start,
     MemeEdition {
@@ -76,6 +72,20 @@ enum State {
     },
 }
 
+#[derive(Default)]
+struct UserSettings {
+    cheap_model: bool,
+}
+
+#[derive(Default)]
+struct BotState_ {
+    chat_states: Mutex<HashMap<UserId, ChatState>>,
+    user_tmp_settings: Mutex<HashMap<UserId, UserSettings>>,
+    meme_creation_confirmations: Mutex<HashMap<(UserId, MessageId), MemeCreationData>>,
+}
+
+type BotState = Arc<BotState_>;
+
 struct MemeCreationData {
     msg: Message,
     thumb_file_id: String,
@@ -83,8 +93,6 @@ struct MemeCreationData {
     meme: memes::ActiveModel,
     img_embedding: Vec<f32>,
 }
-
-type CreationConfirmations = Arc<Mutex<HashMap<(UserId, MessageId), MemeCreationData>>>;
 
 fn make_keyboard(buttons: &[&str]) -> KeyboardMarkup {
     KeyboardMarkup::new([buttons.iter().map(|b| KeyboardButton::new(*b))]).resize_keyboard()
@@ -156,26 +164,37 @@ fn get_admin_chat_id() -> Result<i64> {
     Ok(std::env::var("ADMIN_CHANNEL_ID")?.parse()?)
 }
 
-async fn is_user_admin(bot: &Bot, user: UserId) -> Result<bool> {
-    Ok(bot
+async fn is_user_admin(app_state: &AppState, user: UserId) -> Result<bool> {
+    Ok(app_state
+        .bot
         .get_chat_member(ChatId(get_admin_chat_id()?), user)
         .await?
         .is_present())
 }
 
 async fn finish_meme_creation(
-    bot: &Bot,
-    db: &Storage,
-    openai: &Ai,
+    app_state: &AppState,
+    bot_state: &BotState,
     mut data: MemeCreationData,
 ) -> Result<()> {
     data.meme.created_by = ActiveValue::set(data.msg.chat.id.0);
     data.meme.last_edited_by = ActiveValue::set(data.msg.chat.id.0);
 
-    let ai_meta = openai
+    let is_cheap_model = bot_state
+        .user_tmp_settings
+        .lock()
+        .unwrap()
+        .entry(data.msg.from.context("no from")?.id)
+        .or_default()
+        .cheap_model;
+    let ai_meta = app_state
+        .ai
         .gen_new_meme_metadata(
-            db.load_tg_file(&data.thumb_file_id, data.thumb_file_size)
+            app_state
+                .storage
+                .load_tg_file(&data.thumb_file_id, data.thumb_file_size)
                 .await?,
+            is_cheap_model,
         )
         .await?;
 
@@ -185,12 +204,15 @@ async fn finish_meme_creation(
     ai_meta.apply(&mut data.meme, &mut translation);
     data.meme.publish_status = ActiveValue::set(PublishStatus::Published);
 
-    let control_msg = db
+    let control_msg = app_state
+        .storage
         .create_meme(data.meme, translation, data.img_embedding)
         .await?;
     let control_msg_url = control_msg.url().context("can't create url")?;
 
-    bot.send_message(data.msg.chat.id, format!("Мем создан!\n{control_msg_url}"))
+    app_state
+        .bot
+        .send_message(data.msg.chat.id, format!("Мем создан!\n{control_msg_url}"))
         .reply_markup(KeyboardRemove::new())
         .await?;
 
@@ -198,33 +220,40 @@ async fn finish_meme_creation(
 }
 
 async fn process_meme_creation(
-    bot: &Bot,
-    db: &Storage,
-    openai: &Ai,
+    app_state: &AppState,
+    bot_state: &BotState,
     msg: &Message,
-    confirmations: &CreationConfirmations,
 ) -> Result<()> {
     let mut meme = memes::ActiveModel::new();
     let admin_chat_id = get_admin_chat_id()?;
 
     if let Some((file, thumb)) = try_set_file_from_msg(msg, &mut meme)? {
-        if let Some(meme) = db.load_meme_by_tg_unique_id(&file.unique_id).await? {
-            bot.send_message(
-                msg.chat.id,
-                format!(
-                    "Мем уже существует: https://t.me/c/{}/{}",
-                    -admin_chat_id % 10_000_000_000,
-                    meme.control_message_id
-                ),
-            )
-            .await?;
-        } else {
-            bot.send_chat_action(msg.chat.id, ChatAction::Typing)
+        if let Some(meme) = app_state
+            .storage
+            .load_meme_by_tg_unique_id(&file.unique_id)
+            .await?
+        {
+            app_state
+                .bot
+                .send_message(
+                    msg.chat.id,
+                    format!(
+                        "Мем уже существует: https://t.me/c/{}/{}",
+                        -admin_chat_id % 10_000_000_000,
+                        meme.control_message_id
+                    ),
+                )
                 .await?;
-            let thumb_data = db
+        } else {
+            app_state
+                .bot
+                .send_chat_action(msg.chat.id, ChatAction::Typing)
+                .await?;
+            let thumb_data = app_state
+                .storage
                 .load_tg_file(&thumb.file.id, thumb.file.size as usize)
                 .await?;
-            let embedding = openai.get_image_embedding(&thumb_data).await?;
+            let embedding = app_state.ai.get_image_embedding(&thumb_data).await?;
 
             let meme_creation_data = MemeCreationData {
                 msg: msg.clone(),
@@ -234,8 +263,9 @@ async fn process_meme_creation(
                 img_embedding: embedding.clone(),
             };
 
-            if let Some(found_meme) = db.find_similar_image(embedding).await? {
-                let sent_msg = bot
+            if let Some(found_meme) = app_state.storage.find_similar_image(embedding).await? {
+                let sent_msg = app_state
+                    .bot
                     .send_message(
                         msg.chat.id,
                         format!(
@@ -249,12 +279,16 @@ async fn process_meme_creation(
                         InlineKeyboardButton::callback("Создать", "confirm"),
                     ]]))
                     .await?;
-                confirmations.lock().unwrap().insert(
-                    (msg.from.clone().context("no user")?.id, sent_msg.id),
-                    meme_creation_data,
-                );
+                bot_state
+                    .meme_creation_confirmations
+                    .lock()
+                    .unwrap()
+                    .insert(
+                        (msg.from.clone().context("no user")?.id, sent_msg.id),
+                        meme_creation_data,
+                    );
             } else {
-                finish_meme_creation(bot, db, openai, meme_creation_data).await?;
+                finish_meme_creation(app_state, bot_state, meme_creation_data).await?;
             }
         }
     }
@@ -263,10 +297,8 @@ async fn process_meme_creation(
 }
 
 async fn process_meme_edition(
-    bot: &Bot,
-    db: &Storage,
-    openai: &Ai,
-    states: &StateStorage,
+    app_state: &AppState,
+    bot_state: &BotState,
     user: UserId,
     msg: &Message,
     meme_id: i32,
@@ -288,7 +320,8 @@ async fn process_meme_edition(
     match action {
         MemeEditAction::Ai => {
             let prompt = msg.text().context("no text")?;
-            let (current_meme_ver, translations) = db
+            let (current_meme_ver, translations) = app_state
+                .storage
                 .load_meme_with_translations_by_id(meme_id)
                 .await?
                 .context("meme not found")?;
@@ -297,13 +330,15 @@ async fn process_meme_edition(
                 .find(|t| t.language == "ru")
                 .context("no ru translation")?;
 
-            let thumb = db
+            let thumb = app_state
+                .storage
                 .load_tg_file(
                     &current_meme_ver.thumb_tg_id,
                     current_meme_ver.thumb_content_length.try_into()?,
                 )
                 .await?;
-            let new_metadata = openai
+            let new_metadata = app_state
+                .ai
                 .generate_edited_meme_metadata(
                     AiMetadata::from_meme_with_translation(current_meme_ver, ru_translation),
                     thumb,
@@ -314,27 +349,42 @@ async fn process_meme_edition(
             new_metadata.apply(&mut meme, &mut translation);
             translation.language = ActiveValue::unchanged("ru".to_owned());
 
-            db.update_meme(meme, vec![translation], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![translation], updated_by)
+                .await?;
         }
         MemeEditAction::Slug => {
             let text = msg.text().context("no text")?;
             meme.slug = ActiveValue::set(text.to_owned());
-            db.update_meme(meme, vec![], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![], updated_by)
+                .await?;
         }
         MemeEditAction::Title => {
             let text = msg.text().context("no text")?;
             translation.title = ActiveValue::set(text.to_owned());
-            db.update_meme(meme, vec![translation], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![translation], updated_by)
+                .await?;
         }
         MemeEditAction::Caption => {
             let text = msg.text().context("no text")?;
             translation.caption = ActiveValue::set(text.to_owned());
-            db.update_meme(meme, vec![translation], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![translation], updated_by)
+                .await?;
         }
         MemeEditAction::Description => {
             let text = msg.text().context("no text")?;
             translation.description = ActiveValue::set(text.to_owned());
-            db.update_meme(meme, vec![translation], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![translation], updated_by)
+                .await?;
         }
         MemeEditAction::Text => {
             let text = msg.text().context("no text")?;
@@ -343,7 +393,10 @@ async fn process_meme_edition(
             } else {
                 None
             });
-            db.update_meme(meme, vec![], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![], updated_by)
+                .await?;
         }
         MemeEditAction::Source => {
             let text = msg.text().context("no text")?;
@@ -352,13 +405,21 @@ async fn process_meme_edition(
             } else {
                 None
             });
-            db.update_meme(meme, vec![], updated_by).await?;
+            app_state
+                .storage
+                .update_meme(meme, vec![], updated_by)
+                .await?;
         }
         MemeEditAction::File => {
             if try_set_file_from_msg(msg, &mut meme)?.is_some() {
-                db.update_meme(meme, vec![], updated_by).await?;
+                app_state
+                    .storage
+                    .update_meme(meme, vec![], updated_by)
+                    .await?;
             } else {
-                bot.send_message(msg.chat.id, "Нет файла или он не подходит")
+                app_state
+                    .bot
+                    .send_message(msg.chat.id, "Нет файла или он не подходит")
                     .await?;
                 return Ok(());
             }
@@ -368,26 +429,22 @@ async fn process_meme_edition(
         }
     };
 
-    bot.send_message(msg.chat.id, "Мем обновлён!")
+    app_state
+        .bot
+        .send_message(msg.chat.id, "Мем обновлён!")
         .reply_markup(KeyboardRemove::new())
         .await?;
-    states.lock().unwrap().remove(&user);
+    bot_state.chat_states.lock().unwrap().remove(&user);
 
     Ok(())
 }
 
-async fn handle_message(
-    bot: Bot,
-    msg: Message,
-    db: Storage,
-    openai: Arc<Ai>,
-    states: StateStorage,
-    confirmations: CreationConfirmations,
-) -> Result<()> {
+async fn handle_message(app_state: AppState, bot_state: BotState, msg: Message) -> Result<()> {
     let user = msg.from.clone().context("no from")?.id;
 
-    if is_user_admin(&bot, user).await? {
-        let state = states
+    if is_user_admin(&app_state, user).await? {
+        let state = bot_state
+            .chat_states
             .lock()
             .unwrap()
             .get(&user)
@@ -396,46 +453,67 @@ async fn handle_message(
 
         if let Some(text) = msg.text() {
             if text == "Отмена" {
-                states.lock().unwrap().remove(&user);
-                bot.send_message(msg.chat.id, "Отменено")
+                bot_state.chat_states.lock().unwrap().remove(&user);
+                app_state
+                    .bot
+                    .send_message(msg.chat.id, "Отменено")
                     .reply_markup(KeyboardRemove::new())
                     .await?;
                 return Ok(());
             } else if text == "/reindex" {
-                db.reindex_all().await?;
-                bot.send_message(msg.chat.id, "Reindex completed").await?;
+                app_state.storage.reindex_all().await?;
+                app_state
+                    .bot
+                    .send_message(msg.chat.id, "Reindex completed")
+                    .await?;
                 return Ok(());
             } else if text == "/retgmsg" {
-                db.refresh_all_control_messages(&bot).await?;
-                bot.send_message(msg.chat.id, "Control messages refresh completed")
+                app_state.storage.refresh_all_control_messages().await?;
+                app_state
+                    .bot
+                    .send_message(msg.chat.id, "Control messages refresh completed")
+                    .await?;
+                return Ok(());
+            } else if text == "/smart" || text == "/dumb" {
+                bot_state
+                    .user_tmp_settings
+                    .lock()
+                    .unwrap()
+                    .entry(user)
+                    .or_default()
+                    .cheap_model = text == "/dumb";
+                app_state
+                    .bot
+                    .send_message(msg.chat.id, "Model changed")
                     .await?;
                 return Ok(());
             }
         }
 
         match state {
-            State::Start => process_meme_creation(&bot, &db, &openai, &msg, &confirmations).await?,
-            State::MemeEdition {
+            ChatState::Start => process_meme_creation(&app_state, &bot_state, &msg).await?,
+            ChatState::MemeEdition {
                 meme_id,
                 language,
                 action,
             } => {
                 process_meme_edition(
-                    &bot, &db, &openai, &states, user, &msg, meme_id, language, action,
+                    &app_state, &bot_state, user, &msg, meme_id, language, action,
                 )
                 .await?
             }
         }
     } else {
-        bot.send_message(msg.chat.id, "Добро пожаловать в поисковик мемов!\nЧтобы найти и отправить мем, \
+        app_state.bot.send_message(msg.chat.id, "Добро пожаловать в поисковик мемов!\nЧтобы найти и отправить мем, \
         введите @memexpertbot и поисковый запрос в поле ввода сообщения в любом чате. Например, @memexpertbot вопрос огурец")
         .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::switch_inline_query("Искать мемы", "")]])).await?;
     }
     Ok(())
 }
 
-async fn handle_inline_query(bot: Bot, query: InlineQuery, db: Storage) -> Result<()> {
-    let memes = db
+async fn handle_inline_query(app_state: AppState, query: InlineQuery) -> Result<()> {
+    let memes = app_state
+        .storage
         .search_memes(query.from.id.0.try_into()?, &query.query)
         .await?
         .into_iter()
@@ -453,44 +531,49 @@ async fn handle_inline_query(bot: Bot, query: InlineQuery, db: Storage) -> Resul
                 }
             }
         });
-    bot.answer_inline_query(query.id, memes)
+    app_state
+        .bot
+        .answer_inline_query(query.id, memes)
         .cache_time(0)
         .await?;
     Ok(())
 }
 
-async fn handle_chosen_inline_result(chosen: ChosenInlineResult, db: Storage) -> Result<()> {
+async fn handle_chosen_inline_result(
+    app_state: AppState,
+    chosen: ChosenInlineResult,
+) -> Result<()> {
     let splitten = chosen.result_id.split(':').collect_vec();
     let [use_id, meme_source, meme_id] = splitten[..] else {
         bail!("invalid id")
     };
-    db.save_tg_chosen(
-        use_id.parse()?,
-        chosen.from.id.0.try_into()?,
-        meme_id.parse()?,
-        meme_source.chars().next().context("empty source")?,
-    )
-    .await?;
+    app_state
+        .storage
+        .save_tg_chosen(
+            use_id.parse()?,
+            chosen.from.id.0.try_into()?,
+            meme_id.parse()?,
+            meme_source.chars().next().context("empty source")?,
+        )
+        .await?;
     Ok(())
 }
 
 async fn handle_callback_query(
-    bot: Bot,
+    app_state: AppState,
+    bot_state: BotState,
     q: CallbackQuery,
-    db: Storage,
-    openai: Arc<Ai>,
-    states: StateStorage,
-    confirmations: CreationConfirmations,
 ) -> Result<()> {
     let data = q.data.context("no data")?;
 
     if data == "confirm" {
-        let data = confirmations
+        let data = bot_state
+            .meme_creation_confirmations
             .lock()
             .unwrap()
             .remove(&(q.from.id, q.message.context("no message")?.id()));
         if let Some(data) = data {
-            finish_meme_creation(&bot, &db, &openai, data).await?;
+            finish_meme_creation(&app_state, &bot_state, data).await?;
         };
     } else {
         let callback: MemeEditCallback = data.parse()?;
@@ -503,66 +586,94 @@ async fn handle_callback_query(
 
         match callback.action {
             MemeEditAction::Ai => {
-                bot.send_message(user_id, "Отправьте промпт для редактирования")
+                app_state
+                    .bot
+                    .send_message(user_id, "Отправьте промпт для редактирования")
                     .await?;
             }
             MemeEditAction::Slug => {
-                bot.send_message(user_id, "Отправьте новый слаг").await?;
+                app_state
+                    .bot
+                    .send_message(user_id, "Отправьте новый слаг")
+                    .await?;
             }
             MemeEditAction::Title => {
-                bot.send_message(
-                    user_id,
-                    format!("Отправьте новый заголовок ({})", callback.language),
-                )
-                .await?;
+                app_state
+                    .bot
+                    .send_message(
+                        user_id,
+                        format!("Отправьте новый заголовок ({})", callback.language),
+                    )
+                    .await?;
             }
             MemeEditAction::Description => {
-                bot.send_message(
-                    user_id,
-                    format!("Отправьте новое описание ({})", callback.language),
-                )
-                .await?;
+                app_state
+                    .bot
+                    .send_message(
+                        user_id,
+                        format!("Отправьте новое описание ({})", callback.language),
+                    )
+                    .await?;
             }
             MemeEditAction::Caption => {
-                bot.send_message(
-                    user_id,
-                    format!("Отправьте новую подпись ({})", callback.language),
-                )
-                .await?;
+                app_state
+                    .bot
+                    .send_message(
+                        user_id,
+                        format!("Отправьте новую подпись ({})", callback.language),
+                    )
+                    .await?;
             }
             MemeEditAction::Text => {
-                bot.send_message(user_id, "Отправьте новый текст").await?;
+                app_state
+                    .bot
+                    .send_message(user_id, "Отправьте новый текст")
+                    .await?;
             }
             MemeEditAction::Source => {
-                bot.send_message(user_id, "Отправьте новый источник")
+                app_state
+                    .bot
+                    .send_message(user_id, "Отправьте новый источник")
                     .reply_markup(make_keyboard(&["Неизвестен"]))
                     .await?;
             }
             MemeEditAction::Publish => {
                 meme.publish_status = ActiveValue::set(PublishStatus::Published);
-                db.update_meme(meme, vec![], user_id.0.try_into()?).await?;
-                bot.answer_callback_query(q.id).await?;
+                app_state
+                    .storage
+                    .update_meme(meme, vec![], user_id.0.try_into()?)
+                    .await?;
+                app_state.bot.answer_callback_query(q.id).await?;
                 return Ok(());
             }
             MemeEditAction::Draft => {
                 meme.publish_status = ActiveValue::set(PublishStatus::Draft);
-                db.update_meme(meme, vec![], user_id.0.try_into()?).await?;
-                bot.answer_callback_query(q.id).await?;
+                app_state
+                    .storage
+                    .update_meme(meme, vec![], user_id.0.try_into()?)
+                    .await?;
+                app_state.bot.answer_callback_query(q.id).await?;
                 return Ok(());
             }
             MemeEditAction::Trash => {
                 meme.publish_status = ActiveValue::set(PublishStatus::Trash);
-                db.update_meme(meme, vec![], user_id.0.try_into()?).await?;
-                bot.answer_callback_query(q.id).await?;
+                app_state
+                    .storage
+                    .update_meme(meme, vec![], user_id.0.try_into()?)
+                    .await?;
+                app_state.bot.answer_callback_query(q.id).await?;
                 return Ok(());
             }
             MemeEditAction::File => {
-                bot.send_message(user_id, "Отправьте новый файл").await?;
+                app_state
+                    .bot
+                    .send_message(user_id, "Отправьте новый файл")
+                    .await?;
             }
         }
-        states.lock().unwrap().insert(
+        bot_state.chat_states.lock().unwrap().insert(
             q.from.id,
-            State::MemeEdition {
+            ChatState::MemeEdition {
                 meme_id: callback.meme_id,
                 language: callback.language,
                 action: callback.action,
@@ -570,7 +681,7 @@ async fn handle_callback_query(
         );
     }
 
-    bot.answer_callback_query(q.id).await?;
+    app_state.bot.answer_callback_query(q.id).await?;
 
     Ok(())
 }

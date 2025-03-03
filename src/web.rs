@@ -32,11 +32,11 @@ use sea_orm::ActiveValue;
 use tokio::net::TcpListener;
 use tracing::*;
 
-use crate::storage::Storage;
+use crate::AppState;
 
 static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
-pub async fn run_webserver(db: Storage) -> Result<()> {
+pub async fn run_webserver(app_state: AppState) -> Result<()> {
     let app = Router::new()
         .route("/:path", get(assets))
         .route("/static/:file", get(file))
@@ -45,7 +45,7 @@ pub async fn run_webserver(db: Storage) -> Result<()> {
         .route("/sitemap.xml", get(sitemap_xml))
         .route("/sitemap.txt", get(sitemap_txt))
         .layer(middleware::from_fn(minificator))
-        .with_state(AppState { db });
+        .with_state(app_state);
 
     let addr = SocketAddr::from_str("0.0.0.0:3000")?;
     let listener = TcpListener::bind(addr).await?;
@@ -86,13 +86,8 @@ async fn minificator(request: Request, next: middleware::Next) -> Response {
     // }
 }
 
-#[derive(Clone)]
-struct AppState {
-    db: Storage,
-}
-
 async fn sitemap_xml(State(state): State<AppState>) -> Result<Response, AppError> {
-    let memes = state.db.all_memes_with_translations().await?;
+    let memes = state.storage.all_memes_with_translations().await?;
 
     let memes: Vec<_> = memes
         .into_iter()
@@ -114,7 +109,7 @@ async fn sitemap_xml(State(state): State<AppState>) -> Result<Response, AppError
 }
 
 async fn sitemap_txt(State(state): State<AppState>) -> Result<Response, AppError> {
-    let memes = state.db.all_memes_with_translations().await?;
+    let memes = state.storage.all_memes_with_translations().await?;
     let mut sitemap = String::new();
     for (meme, translations) in memes {
         for translation in translations {
@@ -165,7 +160,11 @@ async fn file(
     let slug = splitten[0];
 
     Ok(
-        if let Some((meme, _)) = state.db.load_meme_with_translations_by_slug(slug).await? {
+        if let Some((meme, _)) = state
+            .storage
+            .load_meme_with_translations_by_slug(slug)
+            .await?
+        {
             let (tg_id, content_length) = if splitten.len() == 3 {
                 (meme.thumb_tg_id, meme.thumb_content_length)
             } else {
@@ -173,7 +172,7 @@ async fn file(
             };
 
             let file = state
-                .db
+                .storage
                 .load_tg_file(&tg_id, content_length.try_into()?)
                 .await?;
             let body = KnownSize::seek(Cursor::new(file)).await?;
@@ -188,7 +187,7 @@ async fn file(
                 ),
             ];
             (headers, Ranged::new(range, body)).into_response()
-        } else if let Some(new_slug) = state.db.get_slug_redirect(slug).await? {
+        } else if let Some(new_slug) = state.storage.get_slug_redirect(slug).await? {
             let new_filename: String = [new_slug.as_str()]
                 .into_iter()
                 .chain(splitten.into_iter().skip(1))
@@ -230,8 +229,10 @@ async fn meme(
     jar: CookieJar,
 ) -> Result<Response, AppError> {
     Ok(
-        if let Some((meme, translations)) =
-            state.db.load_meme_with_translations_by_slug(&slug).await?
+        if let Some((meme, translations)) = state
+            .storage
+            .load_meme_with_translations_by_slug(&slug)
+            .await?
             && let Some(translation) = translations.into_iter().find(|tr| tr.language == language)
         {
             let mime_type: mime::Mime = meme.mime_type.parse()?;
@@ -278,9 +279,9 @@ async fn meme(
 
                 ..Default::default()
             };
-            state.db.save_web_visit(visit).await?;
+            state.storage.save_web_visit(visit).await?;
 
-            let similar_memes = state.db.similar_memes(meme.id, 50).await?;
+            let similar_memes = state.storage.similar_memes(meme.id, 50).await?;
 
             let headers = [(header::CONTENT_LANGUAGE, translation.language)];
 
@@ -317,7 +318,7 @@ async fn meme(
                 },
             )
                 .into_response()
-        } else if let Some(new_slug) = state.db.get_slug_redirect(&slug).await? {
+        } else if let Some(new_slug) = state.storage.get_slug_redirect(&slug).await? {
             Redirect::permanent(&new_slug).into_response()
         } else {
             (StatusCode::NOT_FOUND, "meme not found").into_response()
@@ -328,7 +329,7 @@ async fn meme(
 async fn index(State(state): State<AppState>) -> Result<Response, AppError> {
     let headers = [(header::CONTENT_LANGUAGE, "ru")];
 
-    let popular_memes = state.db.popular_memes(50).await?;
+    let popular_memes = state.storage.popular_memes(50).await?;
 
     Ok((
         headers,

@@ -4,12 +4,11 @@ use anyhow::{Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
-        ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
-        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
-        ChatCompletionToolChoiceOption, CreateChatCompletionRequestArgs, ImageDetail, ImageUrl,
-        ResponseFormat, ResponseFormatJsonSchema,
+        ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
+        ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs, ImageDetail,
+        ImageUrl, ResponseFormat, ResponseFormatJsonSchema,
     },
     Client,
 };
@@ -276,9 +275,14 @@ impl Ai {
     async fn generate_ai_metadata(
         &self,
         messages: Vec<ChatCompletionRequestMessage>,
+        cheap_model: bool,
     ) -> Result<AiMetadata> {
         let request = CreateChatCompletionRequestArgs::default()
-            .model("gpt-4o-2024-11-20")
+            .model(if cheap_model {
+                "gpt-4o-mini-2024-07-18"
+            } else {
+                "gpt-4o-2024-11-20"
+            })
             .max_tokens(1024u32)
             .response_format(response_format())
             .messages(messages)
@@ -301,19 +305,26 @@ impl Ai {
         Ok(from_str(&message)?)
     }
 
-    pub async fn gen_new_meme_metadata(&self, image: Vec<u8>) -> Result<AiMetadata> {
-        self.generate_ai_metadata(vec![
-            ChatCompletionRequestSystemMessageArgs::default()
-                .content(include_str!("../prompts/meta.md"))
-                .build()?
-                .into(),
-            ChatCompletionRequestUserMessageArgs::default()
-                .content(ChatCompletionRequestUserMessageContent::Array(vec![
-                    image_to_messagepart(image),
-                ]))
-                .build()?
-                .into(),
-        ])
+    pub async fn gen_new_meme_metadata(
+        &self,
+        image: Vec<u8>,
+        cheap_model: bool,
+    ) -> Result<AiMetadata> {
+        self.generate_ai_metadata(
+            vec![
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(include_str!("../prompts/meta.md"))
+                    .build()?
+                    .into(),
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(ChatCompletionRequestUserMessageContent::Array(vec![
+                        image_to_messagepart(image),
+                    ]))
+                    .build()?
+                    .into(),
+            ],
+            cheap_model,
+        )
         .await
     }
 
@@ -338,7 +349,7 @@ impl Ai {
                 ]))
                 .build()?
                 .into(),
-        ])
+        ], false)
         .await
     }
 }
