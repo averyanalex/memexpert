@@ -71,10 +71,14 @@ enum ChatState {
         action: MemeEditAction,
     },
 }
-
-#[derive(Default)]
 struct UserSettings {
     cheap_model: bool,
+}
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self { cheap_model: true }
+    }
 }
 
 #[derive(Default)]
