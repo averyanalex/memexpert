@@ -6,14 +6,14 @@
 <meta name="description" content="{{ caption }}">
 <meta property="og:title" content="{{ title }}">
 <meta property="og:description" content="{{ caption }}">
-<meta property="og:url" content="https://memexpert.xyz/{{ language }}/{{ slug }}">
-<link rel="canonical" href="https://memexpert.xyz/{{ language }}/{{ slug }}" />
+<meta property="og:url" content="https://memexpert.net/{{ language }}/{{ slug }}">
+<link rel="canonical" href="https://memexpert.net/{{ language }}/{{ slug }}" />
 <meta property="og:locale" content="{{ locale }}">
 {% if is_mime_video %}
 <meta property="og:type" content="video.other">
-<meta property="og:video" content="https://memexpert.xyz/static/{{ filename }}">
-<meta property="og:video:secure_url" content="https://memexpert.xyz/static/{{ filename }}">
-<meta property="ya:ovs:content_url" content="https://memexpert.xyz/static/{{ filename }}">
+<meta property="og:video" content="https://memexpert.net/static/{{ filename }}">
+<meta property="og:video:secure_url" content="https://memexpert.net/static/{{ filename }}">
+<meta property="ya:ovs:content_url" content="https://memexpert.net/static/{{ filename }}">
 <meta property="ya:ovs:content_url:public" content="true">
 <meta property="ya:ovs:content_id" content="{{ id }}">
 <meta property="ya:ovs:status" content="published">
@@ -21,8 +21,8 @@
 <meta property="og:video:width" content="{{ width }}">
 <meta property="og:video:height" content="{{ height }}">
 <meta property="video:duration" content="{{ duration_secs }}">
-<meta property="og:image" content="https://memexpert.xyz/static/{{ thumb_filename }}">
-<meta property="og:image:secure_url" content="https://memexpert.xyz/static/{{ thumb_filename }}">
+<meta property="og:image" content="https://memexpert.net/static/{{ thumb_filename }}">
+<meta property="og:image:secure_url" content="https://memexpert.net/static/{{ thumb_filename }}">
 <meta property="og:image:type" content="{{ thumb_mime_type }}">
 <meta property="og:image:width" content="{{ thumb_width }}">
 <meta property="og:image:height" content="{{ thumb_height }}">
@@ -31,8 +31,8 @@
 <meta property="ya:ovs:upload_date" content="{{ created_date }}">
 {% else %}
 <meta property="og:type" content="article">
-<meta property="og:image" content="https://memexpert.xyz/static/{{ filename }}">
-<meta property="og:image:secure_url" content="https://memexpert.xyz/static/{{ filename }}">
+<meta property="og:image" content="https://memexpert.net/static/{{ filename }}">
+<meta property="og:image:secure_url" content="https://memexpert.net/static/{{ filename }}">
 <meta property="og:image:type" content="{{ mime_type }}">
 <meta property="og:image:width" content="{{ width }}">
 <meta property="og:image:height" content="{{ height }}">
@@ -59,11 +59,11 @@
                         Your browser doesn't support HTML5 video tag.
                     </video>
                     <meta itemprop="duration" content="{{ duration }}">
-                    <link itemprop="thumbnailUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}">
+                    <link itemprop="thumbnailUrl" href="https://memexpert.net/static/{{ thumb_filename }}">
                     <meta itemprop="allowEmbed" content="true">
                     <meta itemprop="content_id" content="{{ id }}">
                     <span itemprop="thumbnail" itemscope itemtype="https://schema.org/ImageObject">
-                        <link itemprop="contentUrl" href="https://memexpert.xyz/static/{{ thumb_filename }}" />
+                        <link itemprop="contentUrl" href="https://memexpert.net/static/{{ thumb_filename }}" />
                         <meta itemprop="width" content="{{ thumb_width }}">
                         <meta itemprop="height" content="{{ thumb_height }}">
                         <meta itemprop="encodingFormat" content="{{ thumb_mime_type }}">
@@ -119,7 +119,7 @@
     </div>
     <meta itemprop="width" content="{{ width }}">
     <meta itemprop="height" content="{{ height }}">
-    <link itemprop="url" href="https://memexpert.xyz/{{ language }}/{{ slug }}" />
+    <link itemprop="url" href="https://memexpert.net/{{ language }}/{{ slug }}" />
     <meta itemprop="encodingFormat" content="{{ mime_type }}">
     <meta itemprop="isFamilyFriendly" content="true">
     <meta itemprop="uploadDate" content="{{ created_date }}">

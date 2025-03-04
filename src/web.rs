@@ -115,7 +115,7 @@ async fn sitemap_txt(State(state): State<AppState>) -> Result<Response, AppError
         for translation in translations {
             writeln!(
                 &mut sitemap,
-                "https://memexpert.xyz/{}/{}",
+                "https://memexpert.net/{}/{}",
                 translation.language, meme.slug
             )?;
         }
