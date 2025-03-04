@@ -29,7 +29,7 @@ pub struct AiMetadata {
     pub slug: String,
     pub subtitle: String,
     pub description: String,
-    pub text_on_meme: Option<String>,
+    pub text_on_meme: String,
 }
 
 impl AiMetadata {
@@ -42,12 +42,16 @@ impl AiMetadata {
             slug: meme.slug,
             subtitle: ru_translation.caption,
             description: ru_translation.description,
-            text_on_meme: meme.text,
+            text_on_meme: meme.text.unwrap_or_default(),
         }
     }
 
     pub fn apply(self, meme: &mut memes::ActiveModel, translation: &mut translations::ActiveModel) {
-        meme.text = ActiveValue::set(self.text_on_meme);
+        meme.text = ActiveValue::set(if self.text_on_meme.is_empty() {
+            None
+        } else {
+            Some(self.text_on_meme)
+        });
         meme.slug = ActiveValue::set(self.slug);
 
         translation.title = ActiveValue::set(self.title);
@@ -87,8 +91,8 @@ fn response_format() -> ResponseFormat {
                   "description": "Detailed description of the meme."
                 },
                 "text_on_meme": {
-                  "type": ["string", "null"],
-                  "description": "The text displayed on the meme image. Null if missing."
+                  "type": "string",
+                  "description": "The text displayed on the meme image. Empty if missing."
                 }
               },
               "required": [
@@ -98,7 +102,6 @@ fn response_format() -> ResponseFormat {
                 "description",
                 "text_on_meme"
               ],
-              "additionalProperties": false
             })),
             strict: Some(true),
         },
@@ -134,7 +137,11 @@ struct JinaAiEmbedding {
 
 impl Ai {
     pub fn new() -> Self {
-        let client = Client::new();
+        let client = Client::with_config(
+            OpenAIConfig::new()
+                .with_api_base("https://generativelanguage.googleapis.com/v1beta/openai")
+                .with_api_key(std::env::var("GEMINI_API_KEY").expect("JINA_API must be provided")),
+        );
         Self {
             client,
             http: reqwest::Client::new(),
@@ -275,14 +282,10 @@ impl Ai {
     async fn generate_ai_metadata(
         &self,
         messages: Vec<ChatCompletionRequestMessage>,
-        cheap_model: bool,
+        _cheap_model: bool,
     ) -> Result<AiMetadata> {
         let request = CreateChatCompletionRequestArgs::default()
-            .model(if cheap_model {
-                "gpt-4o-mini-2024-07-18"
-            } else {
-                "gpt-4o-2024-11-20"
-            })
+            .model("gemini-2.0-flash")
             .max_tokens(1024u32)
             .response_format(response_format())
             .messages(messages)
