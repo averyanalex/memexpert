@@ -516,13 +516,35 @@ async fn handle_message(app_state: AppState, bot_state: BotState, msg: Message) 
 }
 
 async fn handle_inline_query(app_state: AppState, query: InlineQuery) -> Result<()> {
-    let memes = app_state
+    let tg_use = app_state
         .storage
-        .search_memes(query.from.id.0.try_into()?, &query.query)
-        .await?
+        .create_tg_use(query.from.id, &query.query)
+        .await?;
+
+    let meme_models: Vec<_> = if query.query.is_empty() {
+        let recent = app_state.storage.recent_memes(query.from.id, 30).await?;
+        let popular = app_state.storage.popular_memes(50).await?;
+        recent
+            .into_iter()
+            .map(|m| (m, 'r'))
+            .chain(popular.into_iter().map(|m| (m, 'p')))
+            .collect()
+    } else {
+        app_state
+            .storage
+            .search_memes(&query.query)
+            .await?
+            .into_iter()
+            .map(|m| (m, 'q'))
+            .collect()
+    };
+
+    let memes = meme_models
         .into_iter()
+        .unique_by(|m| m.0.id)
+        .take(50)
         .map(|meme| {
-            let id = format!("{}:{}:{}", meme.2, meme.1, meme.0.id);
+            let id = format!("{}:{}:{}", tg_use.id, meme.1, meme.0.id);
             match meme.0.media_type {
                 MediaType::Photo => InlineQueryResult::CachedPhoto(
                     InlineQueryResultCachedPhoto::new(id, meme.0.tg_id),
@@ -535,6 +557,7 @@ async fn handle_inline_query(app_state: AppState, query: InlineQuery) -> Result<
                 }
             }
         });
+
     app_state
         .bot
         .answer_inline_query(query.id, memes)

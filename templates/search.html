@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Поиск мемов по описанию и тексту - Мем Эксперт{% endblock %}
+
+{% block head %}
+<meta name="description" content="Найти мем или гифку по описанию в Мем Эксперте" />
+<meta property="og:title" content="Поиск мемов по описанию и тексту - Мем Эксперт" />
+<meta property="og:description" content="Найти мем или гифку по описанию в Мем Эксперте" />
+<meta property="og:locale" content="ru_RU" />
+<meta property="og:type" content="website" />
+<link rel="canonical" href="https://memexpert.net/search" />
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl flex flex-col gap-2 items-center">
+    <h1
+        class="my-3 font-extrabold leading-none tracking-tight text-gray-900 dark:text-gray-100 text-2xl md:text-3xl lg:text-4xl">
+        Поиск мема по описанию или тексту</h1>
+    {% include "search_bar.html" %}
+    <p class="text-lg text-gray-900 dark:text-gray-100">Вспомнили классный мем или гифку, которую не сохранили? С Мем
+        Экспертом
+        это больше не проблема! Вспомните, что на
+        нём изображено,
+        написано или в чём его смысл, и введите в поисковую строку выше - мы попробуем найти его в нашей базе.
+    </p>
+</div>
+{% endblock %}

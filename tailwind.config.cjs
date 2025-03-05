@@ -6,6 +6,9 @@ module.exports = {
       fontFamily: {
         sans: ["Inter", "Roboto", "Helvetica Neue", "Arial Nova", "Nimbus Sans", "Arial", "sans-serif"],
       },
+      minWidth: {
+        '1/2': '50%',
+      },
     },
   },
   plugins: [],

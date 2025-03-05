@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{bail, ensure, Context, Result};
 use chrono::Utc;
 use itertools::Itertools;
+use teloxide::types::UserId;
 use tokio::time;
 use tracing::log::LevelFilter;
 
@@ -115,7 +116,8 @@ impl Storage {
             .all(&self.dc)
             .await?
         {
-            if let Some(new_msg) = refresh_meme_control_msg(&self.bot, &meme, &translations).await? {
+            if let Some(new_msg) = refresh_meme_control_msg(&self.bot, &meme, &translations).await?
+            {
                 let mut active = meme.into_active_model();
                 active.control_message_id = ActiveValue::set(new_msg.id.0);
                 active.save(&self.dc).await?;
@@ -446,10 +448,10 @@ impl Storage {
             .collect())
     }
 
-    pub async fn recent_memes(&self, user_id: i64, limit: u64) -> Result<Vec<memes::Model>> {
+    pub async fn recent_memes(&self, user_id: UserId, limit: u64) -> Result<Vec<memes::Model>> {
         let ids: Vec<_> = TgUses::find()
             .filter(tg_uses::Column::ChosenMemeId.is_not_null())
-            .filter(tg_uses::Column::UserId.eq(user_id))
+            .filter(tg_uses::Column::UserId.eq(u64::try_from(user_id.0)?))
             .order_by(tg_uses::Column::Id, Order::Desc)
             .limit(limit * 2)
             .select_only()
@@ -498,14 +500,9 @@ impl Storage {
         self.memes_by_ids(&ids, limit as usize).await
     }
 
-    /// Search most relevant memes by query
-    pub async fn search_memes(
-        &self,
-        user_id: i64,
-        query: &str,
-    ) -> Result<Vec<(memes::Model, char, i64)>> {
-        let tg_use = TgUses::insert(tg_uses::ActiveModel {
-            user_id: ActiveValue::set(user_id),
+    pub async fn create_tg_use(&self, user_id: UserId, query: &str) -> Result<tg_uses::Model> {
+        Ok(TgUses::insert(tg_uses::ActiveModel {
+            user_id: ActiveValue::set(user_id.0.try_into()?),
             query: ActiveValue::set(if query.is_empty() {
                 None
             } else {
@@ -514,83 +511,57 @@ impl Storage {
             ..Default::default()
         })
         .exec_with_returning(&self.dc)
-        .await?;
+        .await?)
+    }
 
-        Ok(if query.is_empty() {
-            let recent = self.recent_memes(user_id, 50).await?;
-            let popular = self.popular_memes(50).await?;
+    /// Search most relevant memes by query
+    pub async fn search_memes(&self, query: &str) -> Result<Vec<memes::Model>> {
+        let text_embedding = self.ai.text_embedding(query).await?;
 
-            recent
-                .into_iter()
-                .map(|m| (m, 'r', tg_use.id))
-                .chain(popular.into_iter().map(|m| (m, 'p', tg_use.id)))
-                .unique_by(|m| m.0.id)
-                .take(50)
-                .collect()
-        } else {
-            let text_embedding = self.ai.text_embedding(query).await?;
-
-            let qd_results = self
-                .qd
-                .query(
-                    QueryPointsBuilder::new("memexpert")
-                        .add_prefetch(
-                            PrefetchQueryBuilder::default()
-                                .query(QdQuery::new_nearest(text_embedding.clone()))
-                                .using("text-dense")
-                                .limit(40u32),
-                        )
-                        .add_prefetch(
-                            PrefetchQueryBuilder::default()
-                                .query(QdQuery::new_nearest(text_embedding))
-                                .using("image")
-                                .limit(30u32),
-                        )
-                        .query(QdQuery::new_fusion(Fusion::Rrf))
-                        .limit(50),
-                )
-                .await?;
-
-            let mut qd_ids_scores = qd_results
-                .result
-                .into_iter()
-                .map(|r| {
-                    (
-                        match r.id.unwrap_or_default().point_id_options.unwrap() {
-                            PointIdOptions::Num(n) => n as i32,
-                            PointIdOptions::Uuid(_) => -1,
-                        },
-                        r.score,
-                        'q',
+        let qd_results = self
+            .qd
+            .query(
+                QueryPointsBuilder::new("memexpert")
+                    .add_prefetch(
+                        PrefetchQueryBuilder::default()
+                            .query(QdQuery::new_nearest(text_embedding.clone()))
+                            .using("text-dense")
+                            .limit(40u32),
                     )
-                })
-                .collect_vec();
+                    .add_prefetch(
+                        PrefetchQueryBuilder::default()
+                            .query(QdQuery::new_nearest(text_embedding))
+                            .using("image")
+                            .limit(30u32),
+                    )
+                    .query(QdQuery::new_fusion(Fusion::Rrf))
+                    .limit(50),
+            )
+            .await?;
 
-            qd_ids_scores.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-            let ids = qd_ids_scores
-                .into_iter()
-                .map(|i| (i.0, i.2))
-                .filter(|(i, _)| *i != -1)
-                .collect_vec();
+        let mut qd_ids_scores = qd_results
+            .result
+            .into_iter()
+            .map(|r| {
+                (
+                    match r.id.unwrap_or_default().point_id_options.unwrap() {
+                        PointIdOptions::Num(n) => n as i32,
+                        PointIdOptions::Uuid(_) => -1,
+                    },
+                    r.score,
+                )
+            })
+            .collect_vec();
 
-            let memes = Memes::find()
-                .filter(memes::Column::Id.is_in(ids.iter().map(|i| i.0)))
-                .filter(memes::Column::PublishStatus.eq(PublishStatus::Published))
-                .order_by_asc(memes::Column::Id)
-                .all(&self.dc)
-                .await?;
+        qd_ids_scores.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        let ids = qd_ids_scores
+            .into_iter()
+            .map(|i| i.0)
+            .filter(|i| *i != -1)
+            .unique()
+            .collect_vec();
 
-            ids.into_iter()
-                .filter_map(|i| {
-                    if let Ok(idx) = memes.binary_search_by_key(&i.0, |m| m.id) {
-                        Some((memes[idx].clone(), i.1, tg_use.id))
-                    } else {
-                        None
-                    }
-                })
-                .take(50)
-                .collect()
-        })
+        self.memes_by_ids(&ids, 50).await
     }
 
     /// Get the new slug by the old slug

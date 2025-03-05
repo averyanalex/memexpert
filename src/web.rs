@@ -7,7 +7,7 @@ use askama::Template;
 
 use axum::{
     body::Body,
-    extract::{Path, Request, State},
+    extract::{Path, Query, Request, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     middleware,
     response::{IntoResponse, Redirect, Response},
@@ -29,6 +29,7 @@ use entities::{sea_orm_active_enums::MediaType, web_visits};
 use include_dir::{include_dir, Dir};
 use rand::{distributions::Alphanumeric, Rng};
 use sea_orm::ActiveValue;
+use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::*;
 
@@ -38,6 +39,7 @@ static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
 pub async fn run_webserver(app_state: AppState) -> Result<()> {
     let app = Router::new()
+        .route("/search", get(search))
         .route("/:path", get(assets))
         .route("/static/:file", get(file))
         .route("/:language/:slug", get(meme))
@@ -315,6 +317,7 @@ async fn meme(
                         .to_rfc3339_opts(SecondsFormat::Secs, false),
                     source: meme.source,
                     gallery: memes_to_gallery(&similar_memes),
+                    query_value: "".to_string(),
                 },
             )
                 .into_response()
@@ -336,9 +339,48 @@ async fn index(State(state): State<AppState>) -> Result<Response, AppError> {
         IndexTemplate {
             language: "ru".to_string(),
             gallery: memes_to_gallery(&popular_memes),
+            query_value: "".to_string(),
         },
     )
         .into_response())
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+}
+
+async fn search(
+    State(state): State<AppState>,
+    query_params: Query<SearchQuery>,
+) -> Result<Response, AppError> {
+    let headers = [(header::CONTENT_LANGUAGE, "ru")];
+
+    let response = if let Some(query) = query_params.q.clone().filter(|q| !q.is_empty()) {
+        let memes = state.storage.search_memes(&query).await?;
+
+        (
+            headers,
+            SearchResultsTemplate {
+                language: "ru".to_string(),
+                query_value: query.clone(),
+                query,
+                gallery: memes_to_gallery(&memes),
+            },
+        )
+            .into_response()
+    } else {
+        (
+            headers,
+            SearchTemplate {
+                language: "ru".to_string(),
+                query_value: "".to_string(),
+            },
+        )
+            .into_response()
+    };
+
+    Ok(response)
 }
 
 struct GalleryImage {
@@ -353,6 +395,23 @@ struct GalleryImage {
 struct IndexTemplate {
     language: String,
     gallery: Vec<GalleryImage>,
+    query_value: String,
+}
+
+#[derive(Template)]
+#[template(path = "search_results.html")]
+struct SearchResultsTemplate {
+    language: String,
+    query: String,
+    query_value: String,
+    gallery: Vec<GalleryImage>,
+}
+
+#[derive(Template)]
+#[template(path = "search.html")]
+struct SearchTemplate {
+    query_value: String,
+    language: String,
 }
 
 #[derive(Template)]
@@ -381,6 +440,7 @@ struct MemeTemplate {
     created_date: String,
     source: Option<String>,
     gallery: Vec<GalleryImage>,
+    query_value: String,
 }
 
 #[derive(Template)]
