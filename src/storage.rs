@@ -21,7 +21,8 @@ use sea_orm::{
 };
 
 use qdrant_client::qdrant::{
-    Condition, Filter, Fusion, PrefetchQueryBuilder, Query as QdQuery, QueryPointsBuilder,
+    Condition, Filter, Fusion, GetPointsBuilder, PointId, PrefetchQueryBuilder, Query as QdQuery,
+    QueryPointsBuilder,
 };
 use qdrant_client::{
     client::Payload,
@@ -33,7 +34,7 @@ use qdrant_client::{
 };
 
 use teloxide::{net::Download, requests::Requester, types::Message};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::ai::JinaTaskType;
 use crate::bot::Bot;
@@ -131,6 +132,33 @@ impl Storage {
             self.update_meme_in_qd(&meme, &translations, None).await?;
         }
 
+        Ok(())
+    }
+
+    pub async fn heal_qd(&self) -> Result<()> {
+        let mut interval = interval(Duration::from_millis(500));
+        for (meme, translations) in Memes::find()
+            .find_with_related(Translations)
+            .all(&self.dc)
+            .await?
+        {
+            if self
+                .qd
+                .get_points(GetPointsBuilder::new(
+                    "memexpert",
+                    vec![PointId {
+                        point_id_options: Some(PointIdOptions::Num(meme.id.try_into()?)),
+                    }],
+                ))
+                .await?
+                .result
+                .is_empty()
+            {
+                self.update_meme_in_qd(&meme, &translations, None).await?;
+                info!("healed meme {}", meme.id);
+                interval.tick().await;
+            }
+        }
         Ok(())
     }
 

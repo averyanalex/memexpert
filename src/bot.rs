@@ -474,6 +474,13 @@ async fn handle_message(app_state: AppState, bot_state: BotState, msg: Message) 
                     .send_message(msg.chat.id, "Reindex completed")
                     .await?;
                 return Ok(());
+            } else if text == "/heal" {
+                app_state.storage.heal_qd().await?;
+                app_state
+                    .bot
+                    .send_message(msg.chat.id, "Heal completed")
+                    .await?;
+                return Ok(());
             } else if text == "/retgmsg" {
                 app_state.storage.refresh_all_control_messages().await?;
                 app_state
