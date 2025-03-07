@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use chrono::Utc;
 use itertools::Itertools;
 use teloxide::types::UserId;
-use tokio::time;
+use tokio::time::{self, interval};
 use tracing::log::LevelFilter;
 
 use entities::{
@@ -19,7 +20,9 @@ use sea_orm::{
     IntoActiveModel, Order, QueryOrder, QuerySelect, TransactionTrait,
 };
 
-use qdrant_client::qdrant::{Fusion, PrefetchQueryBuilder, Query as QdQuery, QueryPointsBuilder};
+use qdrant_client::qdrant::{
+    Condition, Filter, Fusion, PrefetchQueryBuilder, Query as QdQuery, QueryPointsBuilder,
+};
 use qdrant_client::{
     client::Payload,
     qdrant::{
@@ -30,7 +33,9 @@ use qdrant_client::{
 };
 
 use teloxide::{net::Download, requests::Requester, types::Message};
+use tracing::warn;
 
+use crate::ai::JinaTaskType;
 use crate::bot::Bot;
 use crate::{ai::Ai, control::refresh_meme_control_msg};
 
@@ -45,6 +50,24 @@ pub struct Storage {
     qd: Arc<Qdrant>,
     bot: Bot,
     ai: Arc<Ai>,
+}
+
+pub struct SearchParams {
+    pub text_limit: u8,
+    pub clip_limit: u8,
+}
+
+impl Default for SearchParams {
+    fn default() -> Self {
+        Self {
+            text_limit: 50,
+            clip_limit: 5,
+        }
+    }
+}
+
+fn filter_published() -> Filter {
+    Filter::must([Condition::matches("publish_status", "public".to_string())])
 }
 
 impl Storage {
@@ -98,12 +121,13 @@ impl Storage {
         self.qd.delete_collection("memexpert").await?;
         self.create_indexes().await?;
 
+        let mut interval = interval(Duration::from_millis(500));
         for (meme, translations) in Memes::find()
             .find_with_related(Translations)
             .all(&self.dc)
             .await?
         {
-            time::sleep(time::Duration::from_millis(100)).await;
+            interval.tick().await;
             self.update_meme_in_qd(&meme, &translations, None).await?;
         }
 
@@ -135,21 +159,31 @@ impl Storage {
         translations: &[translations::Model],
         img_embedding: Option<Vec<f32>>,
     ) -> Result<()> {
-        if meme.publish_status == PublishStatus::Published {
-            let thumb = self
-                .load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
-                .await?;
-
+        if let Some(meme_text) = self.ai.get_text_for_embedding(meme, translations) {
             let (text_embed, image_embed) = if let Some(image_embed) = img_embedding {
                 (
-                    self.ai.get_meme_text_embedding(meme, translations).await?,
+                    self.ai.jina_text(&meme_text, JinaTaskType::Passage).await?,
                     image_embed,
                 )
             } else {
-                self.ai
-                    .gen_meme_embedding(meme, &thumb, translations)
-                    .await?
+                let thumb = self
+                    .load_tg_file(&meme.thumb_tg_id, meme.thumb_content_length.try_into()?)
+                    .await?;
+                let (clip_res, text_res) = tokio::join!(
+                    self.ai.jina_clip(thumb.into(), JinaTaskType::Passage),
+                    self.ai.jina_text(&meme_text, JinaTaskType::Passage),
+                );
+                (text_res?, clip_res?)
             };
+
+            let publish_status = match meme.publish_status {
+                PublishStatus::Draft => "draft",
+                PublishStatus::Published => "public",
+                PublishStatus::Trash => "trash",
+            };
+
+            let mut payload = Payload::new();
+            payload.insert("publish_status", publish_status);
 
             self.qd
                 .upsert_points(
@@ -163,13 +197,14 @@ impl Storage {
                             ]
                             .into_iter()
                             .collect::<HashMap<_, _>>(),
-                            Payload::new(),
+                            payload,
                         )],
                     )
                     .wait(true),
                 )
                 .await?;
         } else {
+            warn!("meme with missing translations: {}", meme.id);
             self.qd
                 .delete_points(
                     DeletePointsBuilder::new("memexpert")
@@ -451,7 +486,7 @@ impl Storage {
     pub async fn recent_memes(&self, user_id: UserId, limit: u64) -> Result<Vec<memes::Model>> {
         let ids: Vec<_> = TgUses::find()
             .filter(tg_uses::Column::ChosenMemeId.is_not_null())
-            .filter(tg_uses::Column::UserId.eq(u64::try_from(user_id.0)?))
+            .filter(tg_uses::Column::UserId.eq(user_id.0))
             .order_by(tg_uses::Column::Id, Order::Desc)
             .limit(limit * 2)
             .select_only()
@@ -475,12 +510,14 @@ impl Storage {
                         PrefetchQueryBuilder::default()
                             .query(QdQuery::new_nearest(meme_id as u64))
                             .using("text-dense")
+                            .filter(filter_published())
                             .limit(limit / 3 * 2),
                     )
                     .add_prefetch(
                         PrefetchQueryBuilder::default()
                             .query(QdQuery::new_nearest(meme_id as u64))
                             .using("image")
+                            .filter(filter_published())
                             .limit(limit / 2),
                     )
                     .query(QdQuery::new_fusion(Fusion::Rrf))
@@ -515,8 +552,17 @@ impl Storage {
     }
 
     /// Search most relevant memes by query
-    pub async fn search_memes(&self, query: &str) -> Result<Vec<memes::Model>> {
-        let text_embedding = self.ai.text_embedding(query).await?;
+    pub async fn search_memes(
+        &self,
+        query: &str,
+        params: SearchParams,
+    ) -> Result<Vec<memes::Model>> {
+        let (text_res, clip_res) = tokio::join!(
+            self.ai.jina_text(query, JinaTaskType::Query),
+            self.ai
+                .jina_clip(query.to_string().into(), JinaTaskType::Query),
+        );
+        let (text_embedding, clip_embedding) = (text_res?, clip_res?);
 
         let qd_results = self
             .qd
@@ -526,13 +572,15 @@ impl Storage {
                         PrefetchQueryBuilder::default()
                             .query(QdQuery::new_nearest(text_embedding.clone()))
                             .using("text-dense")
-                            .limit(40u32),
+                            .filter(filter_published())
+                            .limit(params.text_limit),
                     )
                     .add_prefetch(
                         PrefetchQueryBuilder::default()
-                            .query(QdQuery::new_nearest(text_embedding))
+                            .query(QdQuery::new_nearest(clip_embedding))
                             .using("image")
-                            .limit(30u32),
+                            .filter(filter_published())
+                            .limit(params.clip_limit),
                     )
                     .query(QdQuery::new_fusion(Fusion::Rrf))
                     .limit(50),

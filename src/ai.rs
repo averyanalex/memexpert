@@ -15,10 +15,9 @@ use async_openai::{
 use base64::prelude::*;
 use entities::{memes, translations};
 use image::{codecs::jpeg::JpegEncoder, ImageReader};
-use itertools::Itertools;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
-use serde_json::{from_str, json};
+use serde_json::{from_str, json, Value};
 use tracing::info;
 
 use crate::ensure_ends_with_punctuation;
@@ -125,9 +124,81 @@ fn text_to_messagepart(text: String) -> ChatCompletionRequestUserMessageContentP
     })
 }
 
+pub enum JinaClipInput {
+    Image(Vec<u8>),
+    Text(String),
+}
+
+impl From<Vec<u8>> for JinaClipInput {
+    fn from(value: Vec<u8>) -> Self {
+        Self::Image(value)
+    }
+}
+
+impl From<String> for JinaClipInput {
+    fn from(value: String) -> Self {
+        Self::Text(value)
+    }
+}
+
+pub enum JinaTaskType {
+    Passage,
+    Query,
+}
+
+impl TryFrom<JinaClipInput> for Value {
+    type Error = anyhow::Error;
+
+    fn try_from(value: JinaClipInput) -> Result<Self> {
+        match value {
+            JinaClipInput::Image(img) => {
+                let mut img = ImageReader::new(Cursor::new(img))
+                    .with_guessed_format()?
+                    .decode()?;
+
+                if img.width() > 512 || img.height() > 512 {
+                    img = img.resize(512, 512, image::imageops::Lanczos3);
+                }
+
+                let mut img_bytes = Vec::new();
+                let encoder = JpegEncoder::new_with_quality(&mut img_bytes, 90);
+                img.write_with_encoder(encoder)?;
+
+                Ok(json!({
+                    "image": BASE64_STANDARD.encode(img_bytes)
+                }))
+            }
+            JinaClipInput::Text(txt) => Ok(json!({
+                "text": txt,
+            })),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JinaAiClipRequest {
+    model: String,
+    dimensions: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
+    normalized: bool,
+    embedding_type: String,
+    input: (Value,),
+}
+
+#[derive(Serialize)]
+struct JinaAiTextRequest {
+    model: String,
+    task: String,
+    late_chunking: bool,
+    dimensions: u32,
+    embedding_type: String,
+    input: (Value,),
+}
+
 #[derive(Deserialize)]
 struct JinaAiResponse {
-    data: Vec<JinaAiEmbedding>,
+    data: (JinaAiEmbedding,),
 }
 
 #[derive(Deserialize)]
@@ -149,20 +220,43 @@ impl Ai {
         }
     }
 
-    pub async fn text_embedding(&self, text: impl Into<String>) -> Result<Vec<f32>> {
-        let req = json!({
-            "model": "jina-clip-v2",
-            "dimensions": 1024,
-            "task": "retrieval.query",
-            "normalized": true,
-            "embedding_type": "float",
-            "input": [
-                {
-                    "text": text.into(),
-                },
-            ],
-        });
+    pub async fn jina_clip(&self, input: JinaClipInput, task: JinaTaskType) -> Result<Vec<f32>> {
+        let task = match task {
+            JinaTaskType::Passage => None,
+            JinaTaskType::Query => Some("retrieval.query".to_string()),
+        };
 
+        let req = JinaAiClipRequest {
+            model: "jina-clip-v2".into(),
+            dimensions: 1024,
+            task,
+            normalized: true,
+            embedding_type: "float".into(),
+            input: (input.try_into()?,),
+        };
+
+        self.get_jina_embeddings(req).await
+    }
+
+    pub async fn jina_text(&self, input: &str, task: JinaTaskType) -> Result<Vec<f32>> {
+        let task = match task {
+            JinaTaskType::Passage => "retrieval.passage",
+            JinaTaskType::Query => "retrieval.query",
+        };
+
+        let req = JinaAiTextRequest {
+            model: "jina-embeddings-v3".into(),
+            task: task.into(),
+            late_chunking: true,
+            dimensions: 1024,
+            embedding_type: "float".into(),
+            input: (input.into(),),
+        };
+
+        self.get_jina_embeddings(req).await
+    }
+
+    async fn get_jina_embeddings(&self, req: impl Serialize) -> Result<Vec<f32>> {
         let res: JinaAiResponse = self
             .http
             .post("https://api.jina.ai/v1/embeddings")
@@ -173,110 +267,29 @@ impl Ai {
             .json()
             .await?;
 
-        res.data
-            .into_iter()
-            .map(|e| e.embedding)
-            .next()
-            .context("can't get result")
+        Ok(res.data.0.embedding)
     }
 
-    async fn jina_clip(&self, input: serde_json::Value) -> Result<Vec<Vec<f32>>> {
-        let req = json!({
-            "model": "jina-clip-v2",
-            "dimensions": 1024,
-            "normalized": true,
-            "embedding_type": "float",
-            "input": input,
-        });
-
-        let res: JinaAiResponse = self
-            .http
-            .post("https://api.jina.ai/v1/embeddings")
-            .json(&req)
-            .bearer_auth(&self.jina_token)
-            .send()
-            .await?
-            .json()
-            .await?;
-
-        Ok(res.data.into_iter().map(|e| e.embedding).collect())
-    }
-
-    fn image_for_clip(thumb: &[u8]) -> Result<serde_json::Value> {
-        let mut img = ImageReader::new(Cursor::new(thumb))
-            .with_guessed_format()?
-            .decode()?;
-
-        if img.width() > 512 || img.height() > 512 {
-            img = img.resize(512, 512, image::imageops::Lanczos3);
-        }
-
-        let mut img_bytes = Vec::new();
-        let encoder = JpegEncoder::new_with_quality(&mut img_bytes, 90);
-        img.write_with_encoder(encoder)?;
-
-        Ok(json!({
-            "image": BASE64_STANDARD.encode(img_bytes)
-        }))
-    }
-
-    fn text_for_clip(
+    pub fn get_text_for_embedding(
+        &self,
         meme: &memes::Model,
         translations: &[translations::Model],
-    ) -> Result<serde_json::Value> {
-        let translation = translations.first().context("no translations")?;
+    ) -> Option<String> {
+        let translation = translations.first()?;
 
         let mut text = format!(
-            "Мем \"{}\".\n{}\n\n{}",
+            "# {}\n{}\n\n{}",
             translation.title,
             ensure_ends_with_punctuation(&translation.caption),
             translation.description
         );
 
         if let Some(text_on_meme) = &meme.text {
-            text += "\n\nТекст: ";
+            text += "\n\nТекст:\n";
             text += text_on_meme;
         }
 
-        Ok(json!({
-            "text": text,
-        }))
-    }
-
-    pub async fn gen_meme_embedding(
-        &self,
-        meme: &memes::Model,
-        thumb: &[u8],
-        translations: &[translations::Model],
-    ) -> Result<(Vec<f32>, Vec<f32>)> {
-        self.jina_clip(json!([
-            Self::text_for_clip(meme, translations)?,
-            Self::image_for_clip(thumb)?,
-        ]))
-        .await?
-        .into_iter()
-        .collect_tuple()
-        .context("can't build 2-element tuple")
-    }
-
-    pub async fn get_image_embedding(&self, image: &[u8]) -> Result<Vec<f32>> {
-        self.jina_clip(json!([Self::image_for_clip(image)?]))
-            .await?
-            .into_iter()
-            .next()
-            .context("no data")
-    }
-
-    pub async fn get_meme_text_embedding(
-        &self,
-        meme: &memes::Model,
-        translations: &[translations::Model],
-    ) -> Result<Vec<f32>> {
-        self.jina_clip(json!([Self::text_for_clip(meme, translations)?]))
-            .await?
-            .into_iter()
-            .next()
-            .context("no data")
+        Some(text)
     }
 
     async fn generate_ai_metadata(

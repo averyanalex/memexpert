@@ -33,6 +33,7 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::*;
 
+use crate::storage::SearchParams;
 use crate::AppState;
 
 static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
@@ -348,6 +349,8 @@ async fn index(State(state): State<AppState>) -> Result<Response, AppError> {
 #[derive(Deserialize)]
 struct SearchQuery {
     q: Option<String>,
+    txt: Option<u8>,
+    img: Option<u8>,
 }
 
 async fn search(
@@ -357,7 +360,15 @@ async fn search(
     let headers = [(header::CONTENT_LANGUAGE, "ru")];
 
     let response = if let Some(query) = query_params.q.clone().filter(|q| !q.is_empty()) {
-        let memes = state.storage.search_memes(&query).await?;
+        let mut params = SearchParams::default();
+        if let Some(txt) = query_params.txt {
+            params.text_limit = txt;
+        }
+        if let Some(img) = query_params.img {
+            params.clip_limit = img;
+        }
+
+        let memes = state.storage.search_memes(&query, params).await?;
 
         (
             headers,

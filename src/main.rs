@@ -1,5 +1,4 @@
 #![feature(let_chains)]
-#![feature(async_closure)]
 #![feature(iter_intersperse)]
 
 use std::str::FromStr;

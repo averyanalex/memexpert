@@ -23,7 +23,7 @@ use teloxide::{
 use tracing::*;
 
 use crate::{
-    ai::AiMetadata,
+    ai::{AiMetadata, JinaTaskType},
     control::{MemeEditAction, MemeEditCallback},
     AppState,
 };
@@ -257,7 +257,10 @@ async fn process_meme_creation(
                 .storage
                 .load_tg_file(&thumb.file.id, thumb.file.size as usize)
                 .await?;
-            let embedding = app_state.ai.get_image_embedding(&thumb_data).await?;
+            let embedding = app_state
+                .ai
+                .jina_clip(thumb_data.into(), JinaTaskType::Passage)
+                .await?;
 
             let meme_creation_data = MemeCreationData {
                 msg: msg.clone(),
@@ -532,7 +535,7 @@ async fn handle_inline_query(app_state: AppState, query: InlineQuery) -> Result<
     } else {
         app_state
             .storage
-            .search_memes(&query.query)
+            .search_memes(&query.query, Default::default())
             .await?
             .into_iter()
             .map(|m| (m, 'q'))
