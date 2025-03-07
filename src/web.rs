@@ -284,7 +284,15 @@ async fn meme(
             };
             state.storage.save_web_visit(visit).await?;
 
-            let similar_memes = state.storage.similar_memes(meme.id, 50).await?;
+            let similar_memes = state
+                .storage
+                .similar_memes(meme.id, 50)
+                .await
+                .map_err(|err| {
+                    error!("error loading similar memes: {err}");
+                    err
+                })
+                .unwrap_or_default();
 
             let headers = [(header::CONTENT_LANGUAGE, translation.language)];
 
