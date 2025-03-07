@@ -217,6 +217,7 @@ fn memes_to_gallery(memes: &[memes::Model]) -> Vec<GalleryImage> {
     memes
         .iter()
         .map(|m| GalleryImage {
+            id: m.id,
             filename: format!("{}.thumb.jpg", m.slug),
             width: m.thumb_width,
             height: m.thumb_height,
@@ -403,6 +404,7 @@ async fn search(
 }
 
 struct GalleryImage {
+    id: i32,
     filename: String,
     width: i32,
     height: i32,
