@@ -2,7 +2,7 @@
     {%- for img in gallery %}
     <div>
         <a href="{{ img.href }}" data-track-content="" data-content-name="Meme Thumb">
-            <img src="/static/{{ img.filename }}" data-content-piece="Meme Thumb {{ img.id }}"
+            <img src="/static/{{ img.filename }}" loading="lazy" data-content-piece="Meme Thumb {{ img.id }}"
                 class="h-auto max-w-full rounded-lg object-cover" width="{{ img.width }}" height="{{ img.height }}" />
         </a>
     </div>
