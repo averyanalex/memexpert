@@ -272,8 +272,8 @@ dependencies = [
 
 [[package]]
 name = "async-openai"
-version = "0.28.0"
-source = "git+https://github.com/averyanalex/async-openai.git#84a773a7d467f40779e89e50509180729b756ee6"
+version = "0.28.1"
+source = "git+https://github.com/averyanalex/async-openai.git#e3137a0d9c6d1653781a3ea8dccb08d305f3cfca"
 dependencies = [
  "async-openai-macros",
  "backoff",
@@ -298,7 +298,7 @@ dependencies = [
 [[package]]
 name = "async-openai-macros"
 version = "0.1.0"
-source = "git+https://github.com/averyanalex/async-openai.git#84a773a7d467f40779e89e50509180729b756ee6"
+source = "git+https://github.com/averyanalex/async-openai.git#e3137a0d9c6d1653781a3ea8dccb08d305f3cfca"
 dependencies = [
  "proc-macro2",
  "quote",

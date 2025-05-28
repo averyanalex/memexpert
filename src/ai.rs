@@ -8,7 +8,7 @@ use async_openai::{
         ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
         ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs, ImageDetail,
-        ImageUrl, ResponseFormat, ResponseFormatJsonSchema,
+        ImageUrl, ReasoningEffort, ResponseFormat, ResponseFormatJsonSchema,
     },
     Client,
 };
@@ -298,8 +298,9 @@ impl Ai {
         _cheap_model: bool,
     ) -> Result<AiMetadata> {
         let request = CreateChatCompletionRequestArgs::default()
-            .model("gemini-2.0-flash")
+            .model("gemini-2.5-flash-preview-05-20")
             .max_tokens(1024u32)
+            .reasoning_effort(ReasoningEffort::None)
             .response_format(response_format())
             .messages(messages)
             .build()?;
