@@ -45,6 +45,11 @@ struct TgUseOnlyMemeId {
     chosen_meme_id: i32,
 }
 
+#[derive(FromQueryResult)]
+struct WebVisitOnlyMemeId {
+    meme_id: i32,
+}
+
 #[derive(Clone)]
 pub struct Storage {
     dc: DatabaseConnection,
@@ -472,18 +477,21 @@ impl Storage {
 
     /// Get most popular memes
     pub async fn popular_memes(&self, limit: u64) -> Result<Vec<memes::Model>> {
-        let ids: Vec<_> = TgUses::find()
-            .filter(tg_uses::Column::ChosenMemeId.is_not_null())
-            .group_by(tg_uses::Column::ChosenMemeId)
-            .order_by(tg_uses::Column::Id.count(), Order::Desc)
+        let ids: Vec<_> = WebVisits::find()
+            .filter(
+                web_visits::Column::Timestamp
+                    .gt(Utc::now().naive_utc() - Duration::from_secs(3 * 24 * 60 * 60)),
+            )
+            .group_by(web_visits::Column::MemeId)
+            .order_by(web_visits::Column::Id.count(), Order::Desc)
             .limit(limit * 2)
             .select_only()
-            .column(tg_uses::Column::ChosenMemeId)
-            .into_model::<TgUseOnlyMemeId>()
+            .column(web_visits::Column::MemeId)
+            .into_model::<WebVisitOnlyMemeId>()
             .all(&self.dc)
             .await?
             .into_iter()
-            .map(|m| m.chosen_meme_id)
+            .map(|m| m.meme_id)
             .collect();
 
         self.memes_by_ids(&ids, limit as usize).await

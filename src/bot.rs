@@ -533,7 +533,7 @@ async fn handle_inline_query(app_state: AppState, query: InlineQuery) -> Result<
         .await?;
 
     let meme_models: Vec<_> = if query.query.is_empty() {
-        let recent = app_state.storage.recent_memes(query.from.id, 30).await?;
+        let recent = app_state.storage.recent_memes(query.from.id, 25).await?;
         let popular = app_state.storage.popular_memes(50).await?;
         recent
             .into_iter()
