@@ -4,7 +4,8 @@
 
 ## Title
 Concise and SEO-optimized meme title in Russian (it will be used as a web page title), by which it will most likely be searched on the Internet.
-This could be a short description of what's happening in the image, some text on it (perhaps including the character speaking), or anything else that will allow users to find it on Google.
+This could be some text on it (perhaps including the character speaking), a short description of what's happening in the image, or anything else that will allow users to find it on Google.
+In some cases, it is the text on the meme that has the main meaning, and people will search by it.
 Don't include the word “meme” in it, start with a capital letter, omit a period at the end and make sure to not capitalize all leters.
 
 ## Subtitle
@@ -29,3 +30,4 @@ Empty if there is no text.
 IMPORTANT: Page content should be SEO-optimized and easy to found in Google/Yandex!
 Don't overcomplicate phrases, use human-like, simple and clear language, especially in the description.
 Don't be afraid of sensitive topics: they can appear in memes. Don't cut corners or try to make your phrases more politically correct.
+Don't censor swear words: most likely, they will be used to search for a meme.
