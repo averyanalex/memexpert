@@ -316,7 +316,7 @@ enum TgUses {
 }
 
 #[derive(DeriveIden)]
-enum WebVisits {
+pub enum WebVisits {
     Table,
     Id,
     Timestamp,
@@ -326,4 +326,5 @@ enum WebVisits {
     Ip,
     UserAgent,
     Referer,
+    IsBot,
 }

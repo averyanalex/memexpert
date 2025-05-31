@@ -280,6 +280,11 @@ async fn meme(
                 ),
                 user_agent: ActiveValue::set(get_header(&headers, header::USER_AGENT)),
                 referer: ActiveValue::set(get_header(&headers, header::REFERER)),
+                is_bot: ActiveValue::set(
+                    get_header(&headers, header::USER_AGENT)
+                        .map(|ua| ua.to_lowercase().contains("bot"))
+                        .unwrap_or(false),
+                ),
 
                 ..Default::default()
             };

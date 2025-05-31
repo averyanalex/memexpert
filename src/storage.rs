@@ -482,6 +482,7 @@ impl Storage {
                 web_visits::Column::Timestamp
                     .gt(Utc::now().naive_utc() - Duration::from_secs(3 * 24 * 60 * 60)),
             )
+            .filter(web_visits::Column::IsBot.eq(false))
             .group_by(web_visits::Column::MemeId)
             .order_by(web_visits::Column::Id.count(), Order::Desc)
             .limit(limit * 2)
