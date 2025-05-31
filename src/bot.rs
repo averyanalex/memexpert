@@ -49,6 +49,7 @@ pub async fn run_bot(app_state: AppState) -> Result<()> {
     let bot_state = BotState::default();
 
     let mut dispatcher = Dispatcher::builder(app_state.bot.clone(), handler)
+        .distribution_function(|_| None::<()>)
         .dependencies(dptree::deps![app_state.clone(), bot_state])
         .enable_ctrlc_handler()
         .build();
