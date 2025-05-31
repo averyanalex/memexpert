@@ -141,6 +141,7 @@ impl From<String> for JinaClipInput {
     }
 }
 
+#[derive(PartialEq)]
 pub enum JinaTaskType {
     Passage,
     Query,
@@ -220,7 +221,17 @@ impl Ai {
         }
     }
 
-    pub async fn jina_clip(&self, input: JinaClipInput, task: JinaTaskType) -> Result<Vec<f32>> {
+    pub async fn jina_clip(
+        &self,
+        mut input: JinaClipInput,
+        task: JinaTaskType,
+    ) -> Result<Vec<f32>> {
+        if task == JinaTaskType::Query
+            && let JinaClipInput::Text(text) = &mut input
+        {
+            *text = text.trim().to_lowercase();
+        }
+
         let task = match task {
             JinaTaskType::Passage => None,
             JinaTaskType::Query => Some("retrieval.query".to_string()),
@@ -239,6 +250,12 @@ impl Ai {
     }
 
     pub async fn jina_text(&self, input: &str, task: JinaTaskType) -> Result<Vec<f32>> {
+        let input = if task == JinaTaskType::Query {
+            input.trim().to_lowercase()
+        } else {
+            input.into()
+        };
+
         let task = match task {
             JinaTaskType::Passage => "retrieval.passage",
             JinaTaskType::Query => "retrieval.query",
