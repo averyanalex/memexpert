@@ -22,7 +22,8 @@ If the title is long enough, use a shortened version for the slug.
 
 ## Description
 Very long and detailed description of the meme image, written in Russian. Describe what you see on the image and what is happening in meme.
-You should split the description into paragraphs (with two line breaks) if you want to write a lot of text. Don't split it if you don't have a lot of text.
+Write 1-2 paragr (with two line breaks). It should be descriptive, but not very long.
+If the text of the meme is in English, you should somehow organically use the translation of the text into Russian in the description because some people will search in Russian.
 Don't write meme's meaning if you aren't sure about it: it can be just funny or cute image without a specific idea.
 
 ## Text on meme
