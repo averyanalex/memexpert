@@ -275,7 +275,7 @@ async fn meme(
                 meme_id: ActiveValue::set(meme.id),
                 language: ActiveValue::set(language.clone()),
                 ip: ActiveValue::set(
-                    get_header(&headers, HeaderName::from_static("x-real-ip"))
+                    get_header(&headers, HeaderName::from_static("cf-connecting-ip"))
                         .unwrap_or_else(|| "127.0.0.1".to_owned()),
                 ),
                 user_agent: ActiveValue::set(get_header(&headers, header::USER_AGENT)),
