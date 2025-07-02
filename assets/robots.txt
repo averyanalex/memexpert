@@ -1,3 +1,4 @@
 Sitemap: https://memexpert.net/sitemap.xml
 User-agent: *
-Allow:
+Disallow: /static/*.thumb.jpg$
+Allow: /
