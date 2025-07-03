@@ -113,6 +113,27 @@
     </div>
     <div class="flex mb-4 flex-col gap-2 items-center" data-nosnippet>
         <h3 class="font-bold text-gray-900 dark:text-gray-100 text-2xl">Похожие мемы</h3>
+        <div id="ut-embed" style="width: 400px; height: 225px;"></div>
+        <script>
+        (function UTCoreInitialization() {
+            if (window.UTInventoryCore) {
+            new window.UTInventoryCore({
+                type: "embed",
+                host: 2870,
+                content: false,
+                container: "ut-embed",
+                width: 400,
+                height: 225,
+                playMode: "autoplay",
+                collapse: "none",
+                infinity: true,
+                infinityTimer: 1,
+            });
+            return;
+            }
+            setTimeout(UTCoreInitialization, 100);
+        })();
+        </script>
         {% include "gallery.html" %}
     </div>
     <div data-nosnippet class="w-full mb-4">

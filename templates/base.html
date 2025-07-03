@@ -33,6 +33,32 @@
   </script>
   <noscript><div><img src="https://mc.yandex.ru/watch/102138777" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
   <!-- /Yandex.Metrika counter -->
+  <script src="https://sdk.adlook.tech/inventory/core.js" async type="text/javascript"></script>
+  <script>
+  (function UTCoreInitialization() {
+    if (window.UTInventoryCore) {
+      new window.UTInventoryCore({
+        type: "sticky",
+        host: 2869,
+        content: false,
+        width: 400,
+        height: 225,
+        playMode: "autoplay",
+        align: "right",
+        verticalAlign: "bottom",
+        openTo: "open-creativeView",
+        infinity: true,
+        infinityTimer: 1,
+        mobile: {
+          align: "center",
+          verticalAlign: "bottom",
+        },
+      });
+      return;
+    }
+    setTimeout(UTCoreInitialization, 100);
+  })();
+  </script>
 </head>
 
 <body class="dark:bg-neutral-900">
