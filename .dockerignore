@@ -1,0 +1,23 @@
+# Docker-specific
+.git/
+
+
+# From .gitignore
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+
+# Private env
+.env

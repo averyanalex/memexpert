@@ -1,0 +1,54 @@
+services:
+  backend-db:
+    image: docker.io/library/postgres:17
+    container_name: memexpert-backend-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - backend_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  agent:
+    image: ghcr.io/averyanalex/memexpert/agent:main
+    container_name: memexpert-agent
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    environment:
+      - APP__LLM__MODEL=openrouter:google/gemini-2.5-flash
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+
+  backend:
+    image: ghcr.io/averyanalex/memexpert/backend:main
+    container_name: memexpert-backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      - APP__DB__URL=postgresql+asyncpg://postgres:postgres@memexpert-backend-db:5432/postgres
+      - APP__AGENT_API__BASE_URL=http://memexpert-agent:8000
+    depends_on:
+      - backend-db
+      - agent
+
+  telegram-client:
+    image: ghcr.io/averyanalex/memexpert/clients/telegram:main
+    container_name: memexpert-telegram-client
+    build:
+      context: .
+      dockerfile: clients/telegram/Dockerfile
+    environment:
+      - APP__BACKEND_API__BASE_URL=http://memexpert-backend:8000
+      - APP__TELEGRAM__BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      - backend
+
+volumes:
+  backend_db_data:
+    driver: local
