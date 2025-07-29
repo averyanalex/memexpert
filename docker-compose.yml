@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     volumes:
-      - backend_db_data:/var/lib/postgresql/data
+      - ./data/backend-db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 30s
@@ -48,7 +48,3 @@ services:
       - APP__TELEGRAM__BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     depends_on:
       - backend
-
-volumes:
-  backend_db_data:
-    driver: local

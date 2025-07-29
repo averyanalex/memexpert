@@ -17,3 +17,6 @@
 
 # Private env
 **/.env
+
+# Persisted data
+/data/
