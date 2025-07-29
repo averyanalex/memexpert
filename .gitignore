@@ -1,19 +1,19 @@
 # Keep in sync with .dockerignore
 
 # Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+**/__pycache__/
+**/*.py[oc]
+**/build/
+**/dist/
+**/wheels/
+**/*.egg-info
 
 # Virtual environments
-.venv/
+**/.venv/
 
 # Tooling
-.mypy_cache/
-.ruff_cache/
+**/.mypy_cache/
+**/.ruff_cache/
 
 # Private env
-.env
+**/.env
