@@ -1,0 +1,34 @@
+[project]
+name = "telegram-client"
+version = "0.1.0"
+description = "MemeXpert Telegram Client"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiogram>=3.21.0",
+    "dishka>=1.6.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+]
+
+[dependency-groups]
+dev = ["mypy>=1.17.0", "ruff>=0.12.4"]
+local = [
+    "lib",
+    "meme-xpert-backend-client",
+]
+
+[tool.uv]
+default-groups = "all"
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+extend-select = ["I"]
+
+[tool.uv.sources]
+lib = { path = "../../lib", editable = true }
+meme-xpert-backend-client = { path = "../../backend-client", editable = true }

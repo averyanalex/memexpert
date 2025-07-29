@@ -1,0 +1,33 @@
+[project]
+name = "lib"
+version = "0.1.0"
+description = "MemeXpert shared library"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dishka>=1.6.0",
+    "opentelemetry-api>=1.35.0",
+    "opentelemetry-exporter-otlp>=1.35.0",
+    "opentelemetry-instrumentation-logging>=0.56b0",
+    "opentelemetry-instrumentation-httpx>=0.56b0",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+    "sentry-sdk[opentelemetry]>=2.33.2",
+]
+
+[dependency-groups]
+dev = [
+    "fastapi>=0.116.1",
+    "httpx>=0.28.1",
+    "mypy>=1.17.0",
+    "opentelemetry-instrumentation-fastapi>=0.56b0",
+    "opentelemetry-instrumentation-logging>=0.56b0",
+    "ruff>=0.12.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+extend-select = ["I"]
